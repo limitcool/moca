@@ -4,8 +4,8 @@
 
 **M**odular **O**rchestration & **C**loud **A**utomation
 
-基于 **Rust (Edition 2024) + MaaFramework + egui** 构建的多游戏通用自动化底座。  
-**开源免费日常托管 + Schema 驱动多游戏接入 + Win32 / ADB 双端统一。**
+基于 **Rust (Edition 2024) + MaaFramework + egui** 构建的多游戏通用自动化底座，已率先接入 **《蓝色星原：旅谣》（Azur Promilia）**。  
+支持 **蓝色星原日常/清体力/家园托管**、Schema 驱动多游戏接入与 **Win32 端游 / ADB 模拟器**双端控制。
 
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange.svg)](https://www.rust-lang.org/)
