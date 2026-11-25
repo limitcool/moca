@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Vendor SDK (downloaded via script / setup)
+/vendor/
+
+# Runtime user data, logs & local profiles
+profiles/
+logs/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

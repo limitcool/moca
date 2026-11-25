@@ -1,0 +1,163 @@
+{
+  "version": "2.0",
+  "game_id": "azur-promilia",
+  "name": "蓝色星原：旅谣",
+  "icon": "icon.png",
+  "welcome": "《蓝色星原：旅谣》Open-Core 自动化包：开源日常托管 + Moca Cloud VIP 智能排班/奇波追踪（公测适配骨架）。",
+  "about": "https://github.com/limitcool/moca",
+  "license": "Apache-2.0",
+  "resource": [
+    {
+      "name": "default",
+      "path": "./resource"
+    }
+  ],
+  "controller": {
+    "Win32": {
+      "type": "Win32",
+      "config": {
+        "title_regex": "蓝色星原|Azur.*Promilia",
+        "execution_mode": "foreground_exclusive"
+      }
+    },
+    "ADB": {
+      "type": "Adb",
+      "config": {
+        "execution_mode": "background"
+      }
+    }
+  },
+  "task": {
+    "DailyLogin": {
+      "label": "启动与每日签到",
+      "description": "开源任务：检测游戏主界面、自动领取月卡与邮件奖励。",
+      "entry": "AP_DailyLoginEntry",
+      "group": "日常托管 (开源免费)",
+      "tier": "free",
+      "option": ["claim_mail"]
+    },
+    "StaminaFarm": {
+      "label": "日常清体力刷本",
+      "description": "开源任务：自动前往选定材料或奇波因子副本清理日常体力。",
+      "entry": "AP_StaminaFarmEntry",
+      "group": "日常托管 (开源免费)",
+      "tier": "free",
+      "option": ["stamina_stage", "stamina_runs", "auto_use_potion"]
+    },
+    "HomelandRoutine": {
+      "label": "家园日常收菜",
+      "description": "开源任务：一键收取家园产出、补充奇波口粮与基础派遣。",
+      "entry": "AP_HomelandEntry",
+      "group": "日常托管 (开源免费)",
+      "tier": "free",
+      "option": ["homeland_feed"]
+    },
+    "DailyReward": {
+      "label": "活跃与纪行领奖",
+      "description": "开源任务：领取每日活跃度宝箱与星旅纪行经验奖励。",
+      "entry": "AP_DailyRewardEntry",
+      "group": "日常托管 (开源免费)",
+      "tier": "free"
+    },
+    "CloudHomelandPlanner": {
+      "label": "家园最优奇波排班",
+      "description": "VIP 云端大脑：OCR 识别奇波技能特长与设施等级，云端求解最优生产排班。",
+      "entry": "AP_CloudHomelandEntry",
+      "group": "高阶智能托管 (VIP 云端)",
+      "tier": "vip",
+      "cloud_strategy": "ap_homeland_planner_v1",
+      "option": ["homeland_priority"]
+    },
+    "CloudKiboHunt": {
+      "label": "大世界奇波智能追踪",
+      "description": "VIP 云端大脑：动态路由刷宠路线，识别高星/闪光奇波自动切换捕捉策略。",
+      "entry": "AP_CloudKiboHuntEntry",
+      "group": "高阶智能托管 (VIP 云端)",
+      "tier": "vip",
+      "cloud_strategy": "ap_kibo_hunt_v1",
+      "option": ["kibo_target_element", "kibo_shiny_only"]
+    },
+    "CloudCombatStrategy": {
+      "label": "高难周期本策略循环",
+      "description": "VIP 云端大脑：云端下发合轴配队与 Boss 机制规避决策指令。",
+      "entry": "AP_CloudCombatEntry",
+      "group": "高阶智能托管 (VIP 云端)",
+      "tier": "vip",
+      "cloud_strategy": "ap_combat_v1",
+      "option": ["combat_mode"]
+    }
+  },
+  "option": {
+    "claim_mail": {
+      "type": "boolean",
+      "label": "顺便一键领取邮箱附件",
+      "default": true
+    },
+    "stamina_stage": {
+      "type": "select",
+      "label": "目标体力副本",
+      "default": "exp",
+      "items": [
+        { "name": "角色经验素材本", "value": "exp" },
+        { "name": "突破结晶副本", "value": "ascension" },
+        { "name": "奇波因子养成副本", "value": "kibo_factor" },
+        { "name": "星币（金币）副本", "value": "gold" }
+      ]
+    },
+    "stamina_runs": {
+      "type": "select",
+      "label": "刷取轮次上限",
+      "default": 4,
+      "items": [
+        { "name": "清光当前体力", "value": 99 },
+        { "name": "固定 2 轮", "value": 2 },
+        { "name": "固定 4 轮", "value": 4 },
+        { "name": "固定 6 轮", "value": 6 }
+      ]
+    },
+    "auto_use_potion": {
+      "type": "boolean",
+      "label": "自动使用即将过期的体力药水",
+      "default": true
+    },
+    "homeland_feed": {
+      "type": "boolean",
+      "label": "自动为劳作奇波补充奇波饼",
+      "default": true
+    },
+    "homeland_priority": {
+      "type": "select",
+      "label": "排班优化目标",
+      "default": "gear_mat",
+      "items": [
+        { "name": "装备锻造材料优先", "value": "gear_mat" },
+        { "name": "奇波口粮与耕作平衡", "value": "food_balance" },
+        { "name": "基建升级加速优先", "value": "upgrade" }
+      ]
+    },
+    "kibo_target_element": {
+      "type": "select",
+      "label": "目标奇波属性",
+      "default": "all",
+      "items": [
+        { "name": "全属性（高星/闪光优先）", "value": "all" },
+        { "name": "火 / 雷输出系", "value": "fire_thunder" },
+        { "name": "水 / 木辅助生产系", "value": "water_wood" }
+      ]
+    },
+    "kibo_shiny_only": {
+      "type": "boolean",
+      "label": "仅捕捉闪光/稀有词条个体",
+      "default": false
+    },
+    "combat_mode": {
+      "type": "select",
+      "label": "高难循环风格",
+      "default": "safe",
+      "items": [
+        { "name": "稳健生存优先（自动闪避）", "value": "safe" },
+        { "name": "极限竞速输出", "value": "burst" }
+      ]
+    }
+  }
+}

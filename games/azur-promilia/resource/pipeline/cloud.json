@@ -1,0 +1,20 @@
+{
+  "AP_CloudHomelandEntry": {
+    "doc": "VIP 云端家园排班入口：由云端策略动态下发或 Custom 桥接",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  },
+  "AP_CloudKiboHuntEntry": {
+    "doc": "VIP 云端奇波追踪入口",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  },
+  "AP_CloudCombatEntry": {
+    "doc": "VIP 云端高难战斗入口",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  }
+}

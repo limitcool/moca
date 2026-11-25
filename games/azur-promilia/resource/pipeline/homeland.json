@@ -1,0 +1,8 @@
+{
+  "AP_HomelandEntry": {
+    "doc": "家园收菜与奇波补饼入口",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  }
+}

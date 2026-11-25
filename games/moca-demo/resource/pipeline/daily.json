@@ -1,0 +1,14 @@
+{
+  "DailyStart": {
+    "next": []
+  },
+  "WeeklyStart": {
+    "next": []
+  },
+  "CloudRogueEntry": {
+    "recognition": "Custom",
+    "custom_recognition": "moca_cloud_recognizer",
+    "action": "Custom",
+    "custom_action": "moca_cloud_action"
+  }
+}

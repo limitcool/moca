@@ -1,0 +1,21 @@
+{
+  "AP_DailyLoginEntry": {
+    "doc": "公测开服后通过 Moca 截图框选工具补充主界面/邮箱按钮模板",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": [
+      "AP_ClaimMailCheck"
+    ]
+  },
+  "AP_ClaimMailCheck": {
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  },
+  "AP_DailyRewardEntry": {
+    "doc": "每日活跃与星旅纪行领奖入口",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "AP_StaminaFarmEntry": {
+    "doc": "体力副本刷取入口（支持通过 UI 动态 override 参数）",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": [
+      "AP_StaminaLoop"
+    ]
+  },
+  "AP_StaminaLoop": {
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": []
+  }
+}
