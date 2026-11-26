@@ -7,7 +7,7 @@
 **M**odular **O**rchestration & **C**loud **A**utomation
 
 基于 **Rust (Edition 2024) + MaaFramework + egui** 构建的多游戏通用自动化底座，已率先接入 **《蓝色星原：旅谣》（Azur Promilia）**。  
-支持 **蓝色星原实机自动跳过剧情、日常/清体力/家园托管**、Schema 驱动多游戏接入与 **Win32 端游 / ADB 模拟器**双端控制。
+支持 **蓝色星原实机自动跳过剧情、一键批量兑换礼包码（内置公测码 + OCR 结果回传）、日常/清体力/家园托管**、Schema 驱动多游戏接入与 **Win32 端游 / ADB 模拟器**双端控制。
 
 [![Latest Release](https://img.shields.io/github/v/release/limitcool/moca?label=Windows%20x64%20下载&color=3b82f6)](https://github.com/limitcool/moca/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -16,7 +16,7 @@
 
 > **萌新直接下载（Windows 10/11 x64，免配置环境）**：  
 > 👉 [**点此一键下载最新版便携包 `Moca-windows-x86_64.zip`**](https://github.com/limitcool/moca/releases/latest/download/Moca-windows-x86_64.zip) ｜ [查看所有 Releases 版本与更新说明](https://github.com/limitcool/moca/releases/latest)  
-> 解压后直接双击 **`Moca.exe`** 即可使用（已内置 MaaFramework SDK、自动申请管理员权限与《蓝色星原》自动跳过剧情包，无需安装 Rust）。
+> 解压后直接双击 **`Moca.exe`** 即可使用（已内置 MaaFramework SDK、PP-OCRv5 中文识别模型、自动申请管理员权限与《蓝色星原》剧情跳过 / 批量兑换码配置，无需安装 Rust）。
 
 <img src="docs/preview.png" alt="Moca Desktop UI Preview" width="900" />
 
@@ -35,6 +35,14 @@
     - `跳梗概`（跳过剧情梗概；普通确认框停住）
     - `点确认`（自动确认提示框；剧情梗概停住）
     - `仅箭头`（仅触发右上 >> 箭头后交由你决定）
+- **批量兑换礼包码（一次性快捷工具 + Maa 原生 PP-OCRv5）**
+  - **预置公测全套 13 个兑换码**：开箱即内置 `LSXY520`、`LSXYFULI`、`LSXYGONGCE` 等全部 13 个公测礼包码，支持多行自由增删、整段粘贴及一键重置默认，点击「立即执行」一次跑完。
+  - **全流程 UI 自动导航与防错**：自动完成 `Esc → 设置 → 账户 → 点击兑换`，通过 Maa 原生 PP-OCRv5 识别输入框与确认按钮，依次 `Ctrl+A + Backspace` 清空残余文本后提交下一条。
+  - **实时 OCR 结果回传与收尾**：每次点击确认后自动抓取弹窗提示文字（如“兑换成功，请前往邮件查看奖励”/已使用/无效）输出到运行日志并在末尾汇总；全部完成后自动点掉结果确认框并点击「取消」退回账户页。
+  - **触发器智能让路**：执行期间自动暂停「剧情自动跳过」让出控制权，完成后自动恢复；剧情跳过亦内置兑换弹窗 OCR 守卫，防止误点确认按钮。
+- **全局热键与前台防抢焦点**
+  - **全局热键（标准 Win32 `RegisterHotKey`，无键盘钩子）**：`F8` 暂停 / 恢复实时辅助（保留勾选配置）、`F9` 0 延迟紧急急停全部任务、`F10` 显示 / 最小化 Moca 窗口；窗口内聚焦时按 `F5` 截取实时画面 / 刷新窗口列表。
+  - **前台独占避让**：在前台独占模式下切回 Moca 窗口时，触发器与批处理自动静默避让焦点，不再强拉游戏回前台；切回游戏后自动继续。
 - **双端窗口/设备接入与状态工作台**
   - Win32 自动按游戏正则匹配窗口、展示目标进程应用小图标、UIPI 管理员权限一致校验及后台并行 / 前台独占模式切换。
   - TOML 按游戏持久化配置（`profiles/<game_id>.toml`），内置 **ROI 采图框选工具**（实时框选截图坐标并一键导出模板 PNG）。
@@ -65,9 +73,9 @@
 
 | 游戏 | 游戏包 ID | 支持端 | 当前状态 |
 | :--- | :--- | :--- | :--- |
-| **蓝色星原：旅谣** (*Azur Promilia*) | `azur-promilia` | Win32 / ADB | 🚧 **适配进行中**：已完成游戏包接入、任务 Schema、双端控制声明、零硬性等待剧情自动跳过与 TOML 配置持久化，持续补齐实机图像模板与日常流程节点。 |
+| **蓝色星原：旅谣** (*Azur Promilia*) | `azur-promilia` | Win32 / ADB | 🚧 **适配进行中**：已完成游戏包接入、任务 Schema、双端控制声明、**零硬性等待剧情自动跳过**、**PP-OCRv5 批量兑换礼包码**与 TOML 配置持久化，持续补齐其余实机日常模板与流程节点。 |
 
-> **说明**：《蓝色星原：旅谣》已率先完成**自动跳过剧情**全流程实机模板与零延迟状态机接入；日常、清体力与家园流程骨架均已就绪，欢迎使用底座自带的 **ROI 采图框选工具** 一起补充实机图像模板与流程 PR！详情见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+> **说明**：《蓝色星原：旅谣》已率先完成**自动跳过剧情**与**批量兑换礼包码（含实机 OCR 结果回传）**全流程接入；日常、清体力与家园流程骨架均已就绪，欢迎使用底座自带的 **ROI 采图框选工具** 一起补充实机图像模板与流程 PR！详情见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
@@ -123,7 +131,7 @@ moca/
 ## 路线图 (Roadmap)
 
 - [x] **Phase 1**：通用多游戏底座骨架（Rust Edition 2024 + `MaaFramework` 动态加载 + 无边框 `egui` 工作台）
-- [x] **Phase 2**：接入《蓝色星原：旅谣》游戏包与**实机零延迟自动跳过剧情**（支持四档弹窗策略热切换）、Win32 窗口匹配与应用图标提取、TOML 配置持久化、ROI 采图框选工具、Windows x64 Release CI
+- [x] **Phase 2**：接入《蓝色星原：旅谣》游戏包、**实机零延迟自动跳过剧情**（支持四档弹窗策略热切换）、**Maa PP-OCRv5 批量兑换礼包码与结果回传**、Win32 全局热键（`F8`/`F9`/`F10`/`F5`）与前台焦点避让、TOML 配置持久化、ROI 采图框选工具、Windows x64 Release CI
 - [ ] **Phase 3**：公测开服后完善《蓝色星原：旅谣》实机日常/清体力/家园模板与流程
 - [ ] **Phase 4**：资源包在线检查更新、多账号轮询队列与云端策略链路对接
 
