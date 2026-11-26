@@ -7,9 +7,14 @@
 基于 **Rust (Edition 2024) + MaaFramework + egui** 构建的多游戏通用自动化底座，已率先接入 **《蓝色星原：旅谣》（Azur Promilia）**。  
 支持 **蓝色星原实机自动跳过剧情、日常/清体力/家园托管**、Schema 驱动多游戏接入与 **Win32 端游 / ADB 模拟器**双端控制。
 
+[![Latest Release](https://img.shields.io/github/v/release/limitcool/moca?label=Windows%20x64%20下载&color=3b82f6)](https://github.com/limitcool/moca/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange.svg)](https://www.rust-lang.org/)
 [![MaaFramework](https://img.shields.io/badge/Powered%20by-MaaFramework%20v5.16-emerald.svg)](https://github.com/MaaXYZ/MaaFramework)
+
+> **萌新直接下载（Windows 10/11 x64，免配置环境）**：  
+> 👉 [**点此一键下载最新版便携包 `Moca-windows-x86_64.zip`**](https://github.com/limitcool/moca/releases/latest/download/Moca-windows-x86_64.zip) ｜ [查看所有 Releases 版本与更新说明](https://github.com/limitcool/moca/releases/latest)  
+> 解压后直接双击 **`Moca.exe`** 即可使用（已内置 MaaFramework SDK、自动申请管理员权限与《蓝色星原》自动跳过剧情包，无需安装 Rust）。
 
 <img src="docs/preview.png" alt="Moca Desktop UI Preview" width="900" />
 
@@ -66,7 +71,15 @@
 
 ## 快速上手
 
-### 1. 环境准备
+### 方式一：普通玩家开箱即用（推荐）
+
+1. 前往 [**GitHub Latest Release**](https://github.com/limitcool/moca/releases/latest) 或 [**直接下载 `Moca-windows-x86_64.zip`**](https://github.com/limitcool/moca/releases/latest/download/Moca-windows-x86_64.zip)。
+2. 将压缩包完整解压到任意全英文/常规文件夹（保留 `Moca.exe` 同级的 `games/`、`*.dll` 与 `plugins/`）。
+3. 双击运行 **`Moca.exe`**（程序会自动申请管理员权限以适配游戏；若跳过提权可在「前台独占」或无 UIPI 限制的窗口下使用）。
+
+### 方式二：开发者源码构建
+
+#### 1. 环境准备
 
 - [Rust 工具链](https://rustup.rs/)（支持 `edition = "2024"`）
 - Windows 10/11（默认 DX12 渲染，可通过 `WGPU_BACKEND` 环境变量覆盖）
@@ -74,7 +87,7 @@
   - 仓库根目录下的 `vendor/maa-sdk/`（确保存在 `vendor/maa-sdk/bin/MaaFramework.dll`）
   - 或者设置环境变量 `MAA_SDK_PATH` 指向解压后的 SDK 目录
 
-### 2. 启动运行与测试
+#### 2. 启动运行与测试
 
 ```powershell
 # 启动 Moca 桌面底座

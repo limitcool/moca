@@ -554,7 +554,7 @@ impl MocaApp {
                     );
                     pill_badge(
                         ui,
-                        "v0.1",
+                        concat!("v", env!("CARGO_PKG_VERSION")),
                         Palette::TEXT_SECONDARY,
                         Palette::BG_CARD,
                         Palette::BORDER,
