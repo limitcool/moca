@@ -44,7 +44,13 @@ impl RoiToolState {
     }
 
     /// Handle pointer drag selection & paint the ROI overlay directly on top of `img_rect`.
-    pub fn interact_and_paint(&mut self, ui: &mut egui::Ui, img_rect: Rect, img_w: u32, img_h: u32) {
+    pub fn interact_and_paint(
+        &mut self,
+        ui: &mut egui::Ui,
+        img_rect: Rect,
+        img_w: u32,
+        img_h: u32,
+    ) {
         if self.enabled {
             let resp = ui.interact(
                 img_rect,

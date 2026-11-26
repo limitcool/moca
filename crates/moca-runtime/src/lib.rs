@@ -1,7 +1,7 @@
 pub mod packages;
 pub mod worker;
 
-pub use packages::{LoadedGamePackage, scan_game_packages};
+pub use packages::{LoadedGamePackage, resolve_workspace_subdir, scan_game_packages};
 pub use worker::{RuntimeCommand, RuntimeEvent, RuntimeHandle};
 
 use thiserror::Error;

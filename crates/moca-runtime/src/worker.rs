@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 
 use image::RgbaImage;
@@ -9,10 +9,10 @@ use moca_maa::{
     DiscoveredAdb, DiscoveredWin32, MaaSession, SessionProgressEvent, discover_adb_devices,
     discover_win32_windows, init_maa, load_bundles, run_task_entry,
 };
-use moca_protocol::{DeviceTarget, ExecutionMode, TaskDecl};
+use moca_protocol::{DeviceTarget, ExecutionMode, ResolvedTask};
 use tokio::sync::{Mutex, mpsc as tokio_mpsc};
 
-use crate::{LoadedGamePackage, scan_game_packages};
+use crate::{LoadedGamePackage, resolve_workspace_subdir, scan_game_packages};
 
 #[derive(Debug, Clone)]
 pub enum RuntimeCommand {
@@ -34,7 +34,16 @@ pub enum RuntimeCommand {
         instance_id: String,
         game_name: String,
         bundle_dirs: Vec<PathBuf>,
-        tasks: Vec<TaskDecl>,
+        tasks: Vec<ResolvedTask>,
+        mode: ExecutionMode,
+    },
+    SetTriggerActive {
+        instance_id: String,
+        task_id: String,
+        active: bool,
+        game_name: String,
+        bundle_dirs: Vec<PathBuf>,
+        task: Box<ResolvedTask>,
         mode: ExecutionMode,
     },
     StopTasks {
@@ -72,6 +81,16 @@ pub enum RuntimeEvent {
     TaskBatchFinished {
         instance_id: String,
         succeeded: bool,
+    },
+    TriggerStateChanged {
+        instance_id: String,
+        task_id: String,
+        active: bool,
+    },
+    TriggerActionCount {
+        instance_id: String,
+        task_id: String,
+        count: u32,
     },
     Log {
         level: LogLevel,
@@ -165,7 +184,8 @@ impl RuntimeHandle {
                                 }
                             }
                             RuntimeCommand::ReloadGamePackages => {
-                                match scan_game_packages("games") {
+                                let games_dir = resolve_workspace_subdir("games");
+                                match scan_game_packages(&games_dir) {
                                     Ok(pkgs) => {
                                         let count = pkgs.len();
                                         emit(
@@ -256,7 +276,7 @@ impl RuntimeHandle {
                                             rp.as_deref(),
                                             LogLevel::Info,
                                             format!(
-                                                "实例 [{instance_id}] 已连接 (分辨率: {res_text})"
+                                                "实例 [{instance_id}] 已连接 (分辨率: {res_text}, 模式: {mode:?})"
                                             ),
                                         );
                                         emit(
@@ -283,6 +303,9 @@ impl RuntimeHandle {
                                 }
                             }
                             RuntimeCommand::Disconnect { instance_id } => {
+                                if let Some(flag) = st.cancel_flags.lock().await.get(&instance_id) {
+                                    flag.store(true, Ordering::Relaxed);
+                                }
                                 st.sessions.lock().await.remove(&instance_id);
                                 emit_log(
                                     &tx,
@@ -350,27 +373,55 @@ impl RuntimeHandle {
                                     bundle_dirs,
                                     tasks,
                                     mode,
+                                    None,
                                 ));
                             }
-                            RuntimeCommand::StopTasks { instance_id } => {
-                                if let Some(flag) = st.cancel_flags.lock().await.get(&instance_id) {
-                                    flag.store(true, Ordering::Relaxed);
-                                }
-                                let tasker = st
-                                    .sessions
-                                    .lock()
-                                    .await
-                                    .get(&instance_id)
-                                    .map(|s| s.clone_tasker());
-                                if let Some(tasker) = tasker {
-                                    let _ = tasker.post_stop();
-                                    emit_log(
+                            RuntimeCommand::SetTriggerActive {
+                                instance_id,
+                                task_id,
+                                active,
+                                game_name,
+                                bundle_dirs,
+                                task,
+                                mode,
+                            } => {
+                                if active {
+                                    // Stop any existing running trigger before applying updated options cleanly.
+                                    if st.cancel_flags.lock().await.contains_key(&instance_id) {
+                                        stop_instance(&st, &tx, rp.as_deref(), &instance_id).await;
+                                        for _ in 0..30 {
+                                            if !st.cancel_flags.lock().await.contains_key(&instance_id) {
+                                                break;
+                                            }
+                                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                        }
+                                    }
+                                    tokio::spawn(execute_task_batch(
+                                        st,
+                                        tx,
+                                        rp,
+                                        instance_id,
+                                        game_name,
+                                        bundle_dirs,
+                                        vec![*task],
+                                        mode,
+                                        Some(task_id),
+                                    ));
+                                } else {
+                                    stop_instance(&st, &tx, rp.as_deref(), &instance_id).await;
+                                    emit(
                                         &tx,
                                         rp.as_deref(),
-                                        LogLevel::Warn,
-                                        format!("已发送停止信号给实例 [{instance_id}]"),
+                                        RuntimeEvent::TriggerStateChanged {
+                                            instance_id,
+                                            task_id,
+                                            active: false,
+                                        },
                                     );
                                 }
+                            }
+                            RuntimeCommand::StopTasks { instance_id } => {
+                                stop_instance(&st, &tx, rp.as_deref(), &instance_id).await;
                             }
                         }
                     }
@@ -406,6 +457,32 @@ struct WorkerState {
     cloud: Arc<StubCloudClient>,
 }
 
+async fn stop_instance(
+    st: &Arc<WorkerState>,
+    tx: &mpsc::Sender<RuntimeEvent>,
+    rp: Option<&(dyn Fn() + Send + Sync)>,
+    instance_id: &str,
+) {
+    if let Some(flag) = st.cancel_flags.lock().await.get(instance_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    let tasker = st
+        .sessions
+        .lock()
+        .await
+        .get(instance_id)
+        .map(|s| s.clone_tasker());
+    if let Some(tasker) = tasker {
+        let _ = tasker.post_stop();
+        emit_log(
+            tx,
+            rp,
+            LogLevel::Warn,
+            format!("已停止实例 [{instance_id}] 当前任务"),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_task_batch(
     st: Arc<WorkerState>,
@@ -414,43 +491,114 @@ async fn execute_task_batch(
     instance_id: String,
     game_name: String,
     bundle_dirs: Vec<PathBuf>,
-    tasks: Vec<TaskDecl>,
+    tasks: Vec<ResolvedTask>,
     mode: ExecutionMode,
+    trigger_task_id: Option<String>,
 ) {
     if tasks.is_empty() {
-        emit_log(&tx, rp.as_deref(), LogLevel::Warn, "未选择任何待执行任务".into());
+        emit_log(
+            &tx,
+            rp.as_deref(),
+            LogLevel::Warn,
+            "未选择任何待执行任务".into(),
+        );
         return;
     }
+
+    let action_counter = Arc::new(AtomicU32::new(0));
+    let miss_counter = Arc::new(AtomicU32::new(0));
 
     let handles = {
         let guard = st.sessions.lock().await;
         guard.get(&instance_id).map(|session| {
+            let tasker_ref = session.clone_tasker();
             let tx_sink = tx.clone();
             let rp_sink = rp.clone();
             let id_sink = instance_id.clone();
-            let _ = session.attach_progress_sink(move |ev| {
-                let msg = match ev {
-                    SessionProgressEvent::TaskStarting(entry) => {
-                        format!("[{id_sink}] 开始节点入口: {entry}")
+            let trig_id = trigger_task_id.clone();
+            let act_cnt = Arc::clone(&action_counter);
+            let miss_cnt = Arc::clone(&miss_counter);
+
+            let _ = session.attach_progress_sink(move |ev| match ev {
+                SessionProgressEvent::TaskStarting(entry) => {
+                    emit_log(
+                        &tx_sink,
+                        rp_sink.as_deref(),
+                        LogLevel::Info,
+                        format!("[{id_sink}] 开始监听/执行: {entry}"),
+                    );
+                }
+                SessionProgressEvent::RecognitionHit(name) => {
+                    miss_cnt.store(0, Ordering::Relaxed);
+                    emit_log(
+                        &tx_sink,
+                        rp_sink.as_deref(),
+                        LogLevel::Info,
+                        format!("[{id_sink}] ✓ 识别命中: {name}"),
+                    );
+                }
+                SessionProgressEvent::RecognitionMissed { name, reco_id } => {
+                    let n = miss_cnt.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Throttle diagnostic output: log first miss and every 20 misses (~30s) thereafter.
+                    if n == 1 || n.is_multiple_of(20) {
+                        let score_hint = tasker_ref
+                            .get_recognition_detail(reco_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|d| {
+                                d.detail
+                                    .get("best")
+                                    .and_then(|b| b.get("score"))
+                                    .and_then(|s| s.as_f64())
+                                    .or_else(|| d.detail.get("score").and_then(|s| s.as_f64()))
+                            })
+                            .map(|s| format!(" (最佳相似度: {s:.3})"))
+                            .unwrap_or_default();
+                        emit_log(
+                            &tx_sink,
+                            rp_sink.as_deref(),
+                            LogLevel::Info,
+                            format!("[{id_sink}] 扫描第 {n} 次未命中「{name}」{score_hint}"),
+                        );
                     }
-                    SessionProgressEvent::NodeStarting(name) => {
-                        format!("[{id_sink}] -> 执行节点: {name}")
+                }
+                SessionProgressEvent::ActionStarting(name) => {
+                    let count = act_cnt.fetch_add(1, Ordering::Relaxed) + 1;
+                    emit_log(
+                        &tx_sink,
+                        rp_sink.as_deref(),
+                        LogLevel::Info,
+                        format!("[{id_sink}] ⚡ 执行动作: {name}"),
+                    );
+                    if let Some(tid) = &trig_id {
+                        emit(
+                            &tx_sink,
+                            rp_sink.as_deref(),
+                            RuntimeEvent::TriggerActionCount {
+                                instance_id: id_sink.clone(),
+                                task_id: tid.clone(),
+                                count,
+                            },
+                        );
                     }
-                    SessionProgressEvent::RecognitionHit(name) => {
-                        format!("[{id_sink}] ✓ 识别命中: {name}")
-                    }
-                    SessionProgressEvent::ActionStarting(name) => {
-                        format!("[{id_sink}] ⚡ 执行动作: {name}")
-                    }
-                    SessionProgressEvent::TaskSucceeded(entry) => {
-                        format!("[{id_sink}] ✓ 流程完成: {entry}")
-                    }
-                    SessionProgressEvent::TaskFailed(entry) => {
-                        format!("[{id_sink}] ✗ 流程失败/中止: {entry}")
-                    }
-                    _ => return,
-                };
-                emit_log(&tx_sink, rp_sink.as_deref(), LogLevel::Info, msg);
+                }
+                SessionProgressEvent::TaskSucceeded(entry) => {
+                    emit_log(
+                        &tx_sink,
+                        rp_sink.as_deref(),
+                        LogLevel::Info,
+                        format!("[{id_sink}] ✓ 流程完成: {entry}"),
+                    );
+                }
+                SessionProgressEvent::TaskFailed(entry) => {
+                    emit_log(
+                        &tx_sink,
+                        rp_sink.as_deref(),
+                        LogLevel::Warn,
+                        format!("[{id_sink}] 流程停止/未匹配: {entry}"),
+                    );
+                }
+                _ => {}
             });
             (session.clone_resource(), session.clone_tasker())
         })
@@ -461,8 +609,19 @@ async fn execute_task_batch(
             &tx,
             rp.as_deref(),
             LogLevel::Warn,
-            format!("请先连接目标设备/窗口后再运行「{game_name}」任务"),
+            format!("请先连接目标设备/窗口后再开启「{game_name}」任务"),
         );
+        if let Some(tid) = trigger_task_id {
+            emit(
+                &tx,
+                rp.as_deref(),
+                RuntimeEvent::TriggerStateChanged {
+                    instance_id,
+                    task_id: tid,
+                    active: false,
+                },
+            );
+        }
         return;
     };
 
@@ -472,26 +631,31 @@ async fn execute_task_batch(
         .await
         .insert(instance_id.clone(), Arc::clone(&cancel_flag));
 
-    emit(
-        &tx,
-        rp.as_deref(),
-        RuntimeEvent::TaskBatchStarted {
-            instance_id: instance_id.clone(),
-        },
-    );
+    if let Some(tid) = &trigger_task_id {
+        emit(
+            &tx,
+            rp.as_deref(),
+            RuntimeEvent::TriggerStateChanged {
+                instance_id: instance_id.clone(),
+                task_id: tid.clone(),
+                active: true,
+            },
+        );
+    } else {
+        emit(
+            &tx,
+            rp.as_deref(),
+            RuntimeEvent::TaskBatchStarted {
+                instance_id: instance_id.clone(),
+            },
+        );
+    }
 
     let _fg_guard = if mode == ExecutionMode::ForegroundExclusive {
         Some(st.foreground_lock.lock().await)
     } else {
         None
     };
-
-    emit_log(
-        &tx,
-        rp.as_deref(),
-        LogLevel::Info,
-        format!("正在加载「{game_name}」资源包 ({} 个目录)...", bundle_dirs.len()),
-    );
 
     let load_res = tokio::task::spawn_blocking({
         let res = resource.clone();
@@ -500,16 +664,25 @@ async fn execute_task_batch(
     })
     .await;
 
-    match load_res {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            emit_log(
+    if !matches!(load_res, Ok(Ok(()))) {
+        emit_log(
+            &tx,
+            rp.as_deref(),
+            LogLevel::Error,
+            format!("加载「{game_name}」资源失败"),
+        );
+        st.cancel_flags.lock().await.remove(&instance_id);
+        if let Some(tid) = trigger_task_id {
+            emit(
                 &tx,
                 rp.as_deref(),
-                LogLevel::Error,
-                format!("加载游戏资源失败: {e}"),
+                RuntimeEvent::TriggerStateChanged {
+                    instance_id,
+                    task_id: tid,
+                    active: false,
+                },
             );
-            st.cancel_flags.lock().await.remove(&instance_id);
+        } else {
             emit(
                 &tx,
                 rp.as_deref(),
@@ -518,36 +691,18 @@ async fn execute_task_batch(
                     succeeded: false,
                 },
             );
-            return;
         }
-        Err(e) => {
-            emit_log(
-                &tx,
-                rp.as_deref(),
-                LogLevel::Error,
-                format!("加载线程异常: {e}"),
-            );
-            st.cancel_flags.lock().await.remove(&instance_id);
-            emit(
-                &tx,
-                rp.as_deref(),
-                RuntimeEvent::TaskBatchFinished {
-                    instance_id,
-                    succeeded: false,
-                },
-            );
-            return;
-        }
+        return;
     }
 
     let mut all_ok = true;
-    for task in tasks {
+    for resolved in tasks {
+        let task = resolved.decl;
+        let pipeline_override = resolved.pipeline_override;
         if cancel_flag.load(Ordering::Relaxed) {
-            emit_log(&tx, rp.as_deref(), LogLevel::Warn, "任务队列已被用户中止".into());
             all_ok = false;
             break;
         }
-
         if let Err(e) = st.cloud.verify_task_access(&task) {
             emit_log(
                 &tx,
@@ -559,28 +714,17 @@ async fn execute_task_batch(
             continue;
         }
 
-        emit_log(
-            &tx,
-            rp.as_deref(),
-            LogLevel::Info,
-            format!("执行任务「{}」(入口: {})", task.label, task.entry),
-        );
-
         let entry = task.entry.clone();
         let tasker_clone = tasker.clone();
-        let run_res =
-            tokio::task::spawn_blocking(move || run_task_entry(&tasker_clone, &entry, None)).await;
+        let run_res = tokio::task::spawn_blocking(move || {
+            run_task_entry(&tasker_clone, &entry, pipeline_override.as_ref())
+        })
+        .await;
 
         match run_res {
             Ok(Ok(true)) => {}
             Ok(Ok(false)) => {
                 all_ok = false;
-                emit_log(
-                    &tx,
-                    rp.as_deref(),
-                    LogLevel::Warn,
-                    format!("任务「{}」未成功结束", task.label),
-                );
             }
             Ok(Err(e)) => {
                 all_ok = false;
@@ -604,14 +748,26 @@ async fn execute_task_batch(
     }
 
     st.cancel_flags.lock().await.remove(&instance_id);
-    emit(
-        &tx,
-        rp.as_deref(),
-        RuntimeEvent::TaskBatchFinished {
-            instance_id,
-            succeeded: all_ok,
-        },
-    );
+    if let Some(tid) = trigger_task_id {
+        emit(
+            &tx,
+            rp.as_deref(),
+            RuntimeEvent::TriggerStateChanged {
+                instance_id,
+                task_id: tid,
+                active: false,
+            },
+        );
+    } else {
+        emit(
+            &tx,
+            rp.as_deref(),
+            RuntimeEvent::TaskBatchFinished {
+                instance_id,
+                succeeded: all_ok,
+            },
+        );
+    }
 }
 
 fn emit(

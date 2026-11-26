@@ -3,7 +3,7 @@
   "game_id": "azur-promilia",
   "name": "蓝色星原：旅谣",
   "icon": "icon.png",
-  "welcome": "《蓝色星原：旅谣》Open-Core 自动化包：开源日常托管 + Moca Cloud VIP 智能排班/奇波追踪（公测适配骨架）。",
+  "welcome": "《蓝色星原：旅谣》通用自动化包：剧情自动跳过与日常托管。",
   "about": "https://github.com/limitcool/moca",
   "license": "Apache-2.0",
   "resource": [
@@ -16,7 +16,8 @@
     "Win32": {
       "type": "Win32",
       "config": {
-        "title_regex": "蓝色星原|Azur.*Promilia",
+        "title_regex": "蓝色星原|Azur.*Promilia|AzurPromilia",
+        "class_regex": "UnityWndClass",
         "execution_mode": "foreground_exclusive"
       }
     },
@@ -28,35 +29,44 @@
     }
   },
   "task": {
+    "AutoSkipStory": {
+      "label": "剧情自动跳过",
+      "description": "实时开关：开启后在后台持续检测右上角跳过箭头，按下方策略处理「跳过剧情 / 确认」弹窗。",
+      "entry": "AP_AutoSkipStoryEntry",
+      "group": "实时辅助",
+      "kind": "trigger",
+      "tier": "free",
+      "option": ["story_skip_confirm_mode"]
+    },
     "DailyLogin": {
       "label": "启动与每日签到",
-      "description": "开源任务：检测游戏主界面、自动领取月卡与邮件奖励。",
+      "description": "检测游戏主界面、自动领取月卡与邮件奖励。",
       "entry": "AP_DailyLoginEntry",
-      "group": "日常托管 (开源免费)",
+      "group": "日常托管",
       "tier": "free",
       "option": ["claim_mail"]
     },
     "StaminaFarm": {
       "label": "日常清体力刷本",
-      "description": "开源任务：自动前往选定材料或奇波因子副本清理日常体力。",
+      "description": "自动前往选定材料或奇波因子副本清理日常体力。",
       "entry": "AP_StaminaFarmEntry",
-      "group": "日常托管 (开源免费)",
+      "group": "日常托管",
       "tier": "free",
       "option": ["stamina_stage", "stamina_runs", "auto_use_potion"]
     },
     "HomelandRoutine": {
       "label": "家园日常收菜",
-      "description": "开源任务：一键收取家园产出、补充奇波口粮与基础派遣。",
+      "description": "一键收取家园产出、补充奇波口粮与基础派遣。",
       "entry": "AP_HomelandEntry",
-      "group": "日常托管 (开源免费)",
+      "group": "日常托管",
       "tier": "free",
       "option": ["homeland_feed"]
     },
     "DailyReward": {
       "label": "活跃与纪行领奖",
-      "description": "开源任务：领取每日活跃度宝箱与星旅纪行经验奖励。",
+      "description": "领取每日活跃度宝箱与星旅纪行经验奖励。",
       "entry": "AP_DailyRewardEntry",
-      "group": "日常托管 (开源免费)",
+      "group": "日常托管",
       "tier": "free"
     },
     "CloudHomelandPlanner": {
@@ -88,6 +98,46 @@
     }
   },
   "option": {
+    "story_skip_confirm_mode": {
+      "type": "select",
+      "label": "跳过弹窗处理",
+      "default": "all",
+      "items": [
+        {
+          "name": "全部自动跳过（跳过剧情 + 确认）",
+          "value": "all"
+        },
+        {
+          "name": "只点「跳过剧情」（确认弹窗停住）",
+          "value": "summary_only",
+          "pipeline_override": {
+            "AP_StoryDialogConfirm": { "enabled": false },
+            "AP_StoryWaitDialogConfirmGone": { "enabled": false }
+          }
+        },
+        {
+          "name": "只点「✓ 确认」（剧情梗概停住）",
+          "value": "dialog_only",
+          "pipeline_override": {
+            "AP_StoryConfirmSkip": { "enabled": false },
+            "AP_StoryWaitConfirmGone": { "enabled": false }
+          }
+        },
+        {
+          "name": "仅点右上箭头（弹窗自选跳不跳）",
+          "value": "manual",
+          "pipeline_override": {
+            "AP_StoryConfirmSkip": { "enabled": false },
+            "AP_StoryWaitConfirmGone": { "enabled": false },
+            "AP_StoryDialogConfirm": { "enabled": false },
+            "AP_StoryWaitDialogConfirmGone": { "enabled": false },
+            "AP_StoryClickSkipArrow": {
+              "next": ["AP_StoryFastNext"]
+            }
+          }
+        }
+      ]
+    },
     "claim_mail": {
       "type": "boolean",
       "label": "顺便一键领取邮箱附件",

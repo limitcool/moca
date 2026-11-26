@@ -38,9 +38,7 @@ pub struct CloudActionCommand {
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum CloudStrategyResponse {
     /// Dynamic Pipeline JSON override injected into MaaFramework memory.
-    PipelineOverride {
-        pipeline: serde_json::Value,
-    },
+    PipelineOverride { pipeline: serde_json::Value },
     /// Step-by-step action instruction returned by cloud decision engine.
     Action(CloudActionCommand),
     /// AES-GCM encrypted payload decrypted in memory on the client.

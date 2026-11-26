@@ -21,7 +21,7 @@
 
 - **多游戏共用同一套底座（Game-Agnostic）**
   - 底座零硬编码任何具体游戏逻辑，完整兼容 [MaaFramework ProjectInterface v2](https://github.com/MaaXYZ/MaaFramework)（`interface.json`）并轻量扩展权限标记。
-  - 新增一款游戏只需在 `games/<game_id>/` 放入 `interface.json` 与 `resource/`，底座自动生成任务列表、Toggle 开关与参数表单，按游戏独立持久化配置到 `profiles/<game_id>.json`。
+  - 新增一款游戏只需在 `games/<game_id>/` 放入 `interface.json` 与 `resource/`，底座自动生成任务列表、Toggle 开关与参数表单，按游戏独立持久化配置到 `profiles/<game_id>.toml`。
 - **Win32 端游 + ADB 模拟器双端一体**
   - **Win32**：支持窗口探测、按 `title_regex` 智能匹配目标游戏窗口、UIPI 管理员权限隔离检测、后台截图 / 前台独占焦点互斥锁。
   - **ADB**：自动发现本地 Android 模拟器（MuMu 等）并调用 MaaFramework 极速截图与触控。
@@ -38,8 +38,7 @@
 
 | 游戏 | 游戏包 ID | 支持端 | 当前状态 |
 | :--- | :--- | :--- | :--- |
-| **蓝色星原：旅谣** (*Azur Promilia*) | `azur-promilia` | Win32 / ADB | 🚧 **开服适配中**：已完成游戏包接入、任务 Schema、双端控制声明与 Pipeline 骨架；将于 11 月 26 日公测开服后持续填充实机图像模板与流程节点。 |
-| 示例通用包 (*Moca Demo*) | `moca-demo` | Win32 / ADB | ✅ 用于验证 Schema 动态表单与权限隔离逻辑。 |
+| **蓝色星原：旅谣** (*Azur Promilia*) | `azur-promilia` | Win32 / ADB | 🚧 **适配进行中**：已完成游戏包接入、任务 Schema、双端控制声明、零硬性等待剧情自动跳过与 TOML 配置持久化，持续补齐实机图像模板与日常流程节点。 |
 
 > **说明**：目前《蓝色星原：旅谣》处于公测前夕（`resource/pipeline/*.json` 为占位骨架节点），欢迎有兴趣的开发者在开服后使用底座自带的 **ROI 采图框选工具** 一起提交模板与日常流程 PR！详情见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

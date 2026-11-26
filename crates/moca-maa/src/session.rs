@@ -22,6 +22,7 @@ pub enum SessionProgressEvent {
     NodeSucceeded(String),
     NodeFailed(String),
     RecognitionHit(String),
+    RecognitionMissed { name: String, reco_id: i64 },
     ActionStarting(String),
 }
 
@@ -59,22 +60,29 @@ impl MaaSession {
                 let screencap = if *screencap_method != 0 {
                     *screencap_method
                 } else {
+                    // Never include GDI here: GDI captures desktop pixels on top of occluded windows.
                     match mode {
-                        ExecutionMode::Background => {
-                            (Win32ScreencapMethod::BACKGROUND | Win32ScreencapMethod::GDI).bits()
-                        }
-                        ExecutionMode::ForegroundExclusive => Win32ScreencapMethod::ALL.bits(),
+                        ExecutionMode::Background => Win32ScreencapMethod::BACKGROUND.bits(),
+                        ExecutionMode::ForegroundExclusive => (Win32ScreencapMethod::FRAME_POOL
+                            | Win32ScreencapMethod::DXGI_DESKTOP_DUP_WINDOW)
+                            .bits(),
                     }
                 };
-                let input = if *input_method != 0 {
-                    *input_method
+                let (mouse, keyboard) = if *input_method != 0 {
+                    (*input_method, *input_method)
                 } else {
                     match mode {
-                        ExecutionMode::Background => Win32InputMethod::SEND_MESSAGE.bits(),
-                        ExecutionMode::ForegroundExclusive => Win32InputMethod::SEIZE.bits(),
+                        ExecutionMode::Background => (
+                            Win32InputMethod::ANCHORED_TOUCH.bits(),
+                            Win32InputMethod::SEND_MESSAGE.bits(),
+                        ),
+                        ExecutionMode::ForegroundExclusive => (
+                            Win32InputMethod::SEIZE.bits(),
+                            Win32InputMethod::SEIZE.bits(),
+                        ),
                     }
                 };
-                Controller::new_win32(*hwnd as *mut c_void, screencap, input, input)?
+                Controller::new_win32(*hwnd as *mut c_void, screencap, mouse, keyboard)?
             }
         };
 
@@ -86,6 +94,9 @@ impl MaaSession {
                 status: status.to_string(),
             });
         }
+
+        // Normalize all captures to 720p short-side so 16:9 templates work across 1080p/1440p/4K.
+        let _ = controller.set_screenshot_target_short_side(720);
 
         let resource = Resource::new()?;
         let tasker = Tasker::new()?;
@@ -131,9 +142,15 @@ impl MaaSession {
         self.tasker.clear_sinks();
         let sink = event_sink::from_closure(move |_handle, event| {
             let mapped = match event {
-                MaaEvent::TaskerTaskStarting(d) => Some(SessionProgressEvent::TaskStarting(d.entry.clone())),
-                MaaEvent::TaskerTaskSucceeded(d) => Some(SessionProgressEvent::TaskSucceeded(d.entry.clone())),
-                MaaEvent::TaskerTaskFailed(d) => Some(SessionProgressEvent::TaskFailed(d.entry.clone())),
+                MaaEvent::TaskerTaskStarting(d) => {
+                    Some(SessionProgressEvent::TaskStarting(d.entry.clone()))
+                }
+                MaaEvent::TaskerTaskSucceeded(d) => {
+                    Some(SessionProgressEvent::TaskSucceeded(d.entry.clone()))
+                }
+                MaaEvent::TaskerTaskFailed(d) => {
+                    Some(SessionProgressEvent::TaskFailed(d.entry.clone()))
+                }
                 MaaEvent::NodePipelineNodeStarting(d) => {
                     Some(SessionProgressEvent::NodeStarting(d.name.clone()))
                 }
@@ -145,6 +162,12 @@ impl MaaSession {
                 }
                 MaaEvent::NodeRecognitionSucceeded(d) => {
                     Some(SessionProgressEvent::RecognitionHit(d.name.clone()))
+                }
+                MaaEvent::NodeRecognitionFailed(d) => {
+                    Some(SessionProgressEvent::RecognitionMissed {
+                        name: d.name.clone(),
+                        reco_id: d.reco_id,
+                    })
                 }
                 MaaEvent::NodeActionStarting(d) => {
                     Some(SessionProgressEvent::ActionStarting(d.name.clone()))

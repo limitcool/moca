@@ -1,0 +1,156 @@
+{
+  "AP_AutoSkipStoryEntry": {
+    "doc": "低功耗待机监听入口（1000ms/次）：无剧情时不占资源，出现跳过箭头或任意确认弹窗立即触发",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "timeout": -1,
+    "rate_limit": 1000,
+    "next": [
+      "AP_StoryDialogConfirm",
+      "AP_StoryConfirmSkip",
+      "AP_StoryClickSkipArrow"
+    ]
+  },
+  "AP_StoryClickSkipArrow": {
+    "doc": "点击右上角 >> 跳过箭头；点击后零硬性sleep，立即以 60ms 高频轮询等待确认弹窗出现（超时 1.8s）",
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "story_skip_arrow.png",
+        "roi": [1100, 0, 180, 90],
+        "threshold": 0.62,
+        "method": 5,
+        "green_mask": true
+      }
+    },
+    "action": "Click",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 60,
+    "timeout": 1800,
+    "next": [
+      "AP_StoryDialogConfirm",
+      "AP_StoryConfirmSkip"
+    ],
+    "on_error": [
+      "AP_StoryFastNext"
+    ]
+  },
+  "AP_StoryConfirmSkip": {
+    "doc": "点击剧情梗概弹窗「跳过剧情」胶囊按钮；点击后零硬性sleep，立即以 60ms 轮询等待弹窗消失",
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "story_skip_confirm.png",
+        "roi": [640, 380, 640, 340],
+        "threshold": 0.62,
+        "method": 5
+      }
+    },
+    "action": "Click",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 60,
+    "timeout": 1200,
+    "next": [
+      "AP_StoryWaitConfirmGone"
+    ],
+    "on_error": [
+      "AP_StoryFastNext"
+    ]
+  },
+  "AP_StoryWaitConfirmGone": {
+    "doc": "等待「跳过剧情」弹窗淡出消失（inverse=true），消失即刻放行避免重复点击",
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "story_skip_confirm.png",
+        "roi": [640, 380, 640, 340],
+        "threshold": 0.62,
+        "method": 5
+      }
+    },
+    "inverse": true,
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 80,
+    "timeout": 1500,
+    "next": [
+      "AP_StoryDialogConfirm",
+      "AP_StoryConfirmSkip",
+      "AP_StoryClickSkipArrow"
+    ],
+    "on_error": [
+      "AP_AutoSkipStoryEntry"
+    ]
+  },
+  "AP_StoryDialogConfirm": {
+    "doc": "点击提示弹窗「✓ 确认」胶囊按钮；点击后零硬性sleep，立即等待弹窗消失",
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "story_skip_dialog_confirm.png",
+        "roi": [680, 400, 300, 100],
+        "threshold": 0.68,
+        "method": 5
+      }
+    },
+    "action": "Click",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 60,
+    "timeout": 1200,
+    "next": [
+      "AP_StoryWaitDialogConfirmGone"
+    ],
+    "on_error": [
+      "AP_StoryFastNext"
+    ]
+  },
+  "AP_StoryWaitDialogConfirmGone": {
+    "doc": "等待提示「✓ 确认」弹窗淡出消失（inverse=true），消失即刻继续检测下一段剧情",
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "story_skip_dialog_confirm.png",
+        "roi": [680, 400, 300, 100],
+        "threshold": 0.68,
+        "method": 5
+      }
+    },
+    "inverse": true,
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 80,
+    "timeout": 1500,
+    "next": [
+      "AP_StoryDialogConfirm",
+      "AP_StoryConfirmSkip",
+      "AP_StoryClickSkipArrow"
+    ],
+    "on_error": [
+      "AP_AutoSkipStoryEntry"
+    ]
+  },
+  "AP_StoryFastNext": {
+    "doc": "连跳快速衔接窗口（80ms 轮询，2.5s 内无新剧情则切回 1000ms 省电待机）",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 80,
+    "timeout": 2500,
+    "next": [
+      "AP_StoryDialogConfirm",
+      "AP_StoryConfirmSkip",
+      "AP_StoryClickSkipArrow"
+    ],
+    "on_error": [
+      "AP_AutoSkipStoryEntry"
+    ]
+  }
+}

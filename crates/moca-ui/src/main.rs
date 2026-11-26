@@ -4,7 +4,21 @@ mod roi_tool;
 mod schema_ui;
 mod theme;
 
+use std::sync::Arc;
+
 use tracing_subscriber::EnvFilter;
+
+fn load_app_icon() -> Option<Arc<egui::IconData>> {
+    let bytes = include_bytes!("../../../assets/moca_icon.png");
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let width = img.width();
+    let height = img.height();
+    Some(Arc::new(egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    }))
+}
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
@@ -13,11 +27,16 @@ fn main() -> eframe::Result {
         )
         .init();
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_decorations(false)
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([960.0, 600.0]);
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_decorations(false)
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([960.0, 600.0]),
+        viewport,
         ..Default::default()
     };
 

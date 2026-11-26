@@ -10,8 +10,28 @@ pub struct LoadedGamePackage {
     pub manifest: GameInterface,
 }
 
+/// Resolve workspace subdirectory (`games`, `profiles`, etc.) robustly even when
+/// launched from another working directory (e.g. an elevated `System32` shell).
+pub fn resolve_workspace_subdir(name: &str) -> PathBuf {
+    if let Ok(cwd) = std::env::current_dir()
+        && cwd.join("games").is_dir()
+    {
+        return cwd.join(name);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors().take(6) {
+            if ancestor.join("games").is_dir() {
+                return ancestor.join(name);
+            }
+        }
+    }
+    PathBuf::from(name)
+}
+
 /// Scan `<games_dir>/*/interface.json` and load all valid game packages.
-pub fn scan_game_packages(games_dir: impl AsRef<Path>) -> Result<Vec<LoadedGamePackage>, RuntimeError> {
+pub fn scan_game_packages(
+    games_dir: impl AsRef<Path>,
+) -> Result<Vec<LoadedGamePackage>, RuntimeError> {
     let dir = games_dir.as_ref();
     if !dir.exists() {
         return Ok(Vec::new());
@@ -51,18 +71,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scans_demo_and_azur_promilia_packages() {
+    fn scans_azur_promilia_package() {
         let games_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../games");
         let packages = scan_game_packages(&games_root).expect("scan succeeds");
         assert!(
             packages
                 .iter()
-                .any(|p| p.manifest.effective_game_id() == "moca-demo")
+                .any(|p| p.manifest.effective_game_id() == "azur-promilia")
         );
         assert!(
-            packages
+            !packages
                 .iter()
-                .any(|p| p.manifest.effective_game_id() == "azur-promilia")
+                .any(|p| p.manifest.effective_game_id() == "moca-demo")
         );
     }
 }

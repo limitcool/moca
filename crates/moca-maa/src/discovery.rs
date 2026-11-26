@@ -19,6 +19,7 @@ pub struct DiscoveredWin32 {
     pub class_name: String,
     pub client_size: Option<(i32, i32)>,
     pub is_elevated: Option<bool>,
+    pub icon_rgba: Option<(u32, u32, Vec<u8>)>,
 }
 
 /// Discover connected ADB devices and supported Android emulators.
@@ -51,12 +52,14 @@ pub fn discover_win32_windows() -> Result<Vec<DiscoveredWin32>, MaaAdapterError>
             continue;
         }
         let is_elevated = win32_util::is_window_process_elevated(hwnd);
+        let icon_rgba = win32_util::get_window_icon_rgba(hwnd);
         results.push(DiscoveredWin32 {
             hwnd,
             title: w.window_name,
             class_name: w.class_name,
             client_size,
             is_elevated,
+            icon_rgba,
         });
     }
     Ok(results)

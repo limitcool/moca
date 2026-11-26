@@ -22,8 +22,11 @@ impl Palette {
     pub const ACCENT_HOVER: Color32 = Color32::from_rgb(110, 146, 255);
     pub const ACCENT_SOFT_BG: Color32 = Color32::from_rgba_premultiplied(32, 47, 82, 255);
 
+    #[allow(dead_code)]
     pub const VIP_GOLD: Color32 = Color32::from_rgb(245, 188, 72);
+    #[allow(dead_code)]
     pub const VIP_BG: Color32 = Color32::from_rgb(46, 37, 20);
+    #[allow(dead_code)]
     pub const VIP_BORDER: Color32 = Color32::from_rgb(122, 92, 34);
 
     pub const SUCCESS: Color32 = Color32::from_rgb(52, 211, 153);
@@ -144,13 +147,7 @@ pub fn sub_card_frame() -> egui::Frame {
         .inner_margin(Margin::symmetric(10, 8))
 }
 
-pub fn pill_badge(
-    ui: &mut egui::Ui,
-    text: &str,
-    fg: Color32,
-    bg: Color32,
-    border: Color32,
-) {
+pub fn pill_badge(ui: &mut egui::Ui, text: &str, fg: Color32, bg: Color32, border: Color32) {
     egui::Frame::new()
         .fill(bg)
         .stroke(Stroke::new(1.0, border))
@@ -248,6 +245,7 @@ pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 }
 
 /// Paint a crisp vector Moca emblem icon.
+#[allow(dead_code)]
 pub fn paint_moca_logo(ui: &mut egui::Ui, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -271,10 +269,7 @@ pub fn paint_moca_logo(ui: &mut egui::Ui, size: f32) {
         Pos2::new(p.right(), p.top()),
         Pos2::new(p.right(), p.bottom()),
     ];
-    painter.add(egui::Shape::line(
-        pts,
-        Stroke::new(2.2, Color32::WHITE),
-    ));
+    painter.add(egui::Shape::line(pts, Stroke::new(2.2, Color32::WHITE)));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,7 +332,8 @@ pub fn window_caption_button(ui: &mut egui::Ui, kind: WindowCaptionKind) -> egui
                     stroke,
                     egui::StrokeKind::Inside,
                 );
-                ui.painter().rect_filled(front, CornerRadius::same(1), Palette::BG_HEADER);
+                ui.painter()
+                    .rect_filled(front, CornerRadius::same(1), Palette::BG_HEADER);
                 ui.painter().rect_stroke(
                     front,
                     CornerRadius::same(1),

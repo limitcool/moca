@@ -2,10 +2,12 @@ pub mod cloud;
 pub mod interface;
 pub mod profile;
 
-pub use cloud::{CloudActionCommand, CloudStrategyRequest, CloudStrategyResponse, UserTier, VipSession};
+pub use cloud::{
+    CloudActionCommand, CloudStrategyRequest, CloudStrategyResponse, UserTier, VipSession,
+};
 pub use interface::{
     ControllerDecl, ControllerKind, ExecutionMode, GameInterface, OptionDecl, OptionInputType,
-    OptionKind, OptionSelectItem, ResourceDecl, TaskDecl, TaskTier,
+    OptionKind, OptionSelectItem, ResolvedTask, ResourceDecl, TaskDecl, TaskKind, TaskTier,
 };
 pub use profile::{DeviceTarget, InstanceProfile, SavedGameProfile};
 
@@ -17,6 +19,10 @@ pub enum ProtocolError {
     Io(#[from] std::io::Error),
     #[error("JSON parse error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+    #[error("TOML serialize error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
     #[error("Invalid interface manifest: {0}")]
     Validation(String),
 }

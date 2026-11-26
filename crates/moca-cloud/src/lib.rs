@@ -89,6 +89,7 @@ impl CloudClient for StubCloudClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moca_protocol::TaskKind;
 
     fn sample_vip_task() -> TaskDecl {
         TaskDecl {
@@ -98,6 +99,8 @@ mod tests {
             group: None,
             controller: vec![],
             option: vec![],
+            pipeline_override: None,
+            kind: TaskKind::Batch,
             tier: TaskTier::Vip,
             cloud_strategy: Some("rogue_v1".into()),
         }
