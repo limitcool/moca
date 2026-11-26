@@ -6,6 +6,10 @@
   "welcome": "《蓝色星原：旅谣》通用自动化包：剧情自动跳过与日常托管。",
   "about": "https://github.com/limitcool/moca",
   "license": "Apache-2.0",
+  "theme": {
+    "preset": "azur_star",
+    "name": "星原星盘"
+  },
   "resource": [
     {
       "name": "default",
@@ -100,32 +104,36 @@
   "option": {
     "story_skip_confirm_mode": {
       "type": "select",
-      "label": "跳过弹窗处理",
+      "label": "跳过弹窗处理策略",
       "default": "all",
       "items": [
         {
-          "name": "全部自动跳过（跳过剧情 + 确认）",
-          "value": "all"
+          "name": "全自动跳过",
+          "value": "all",
+          "description": "自动点右上 >> 箭头及「跳过剧情 / ✓ 确认」全部弹窗"
         },
         {
-          "name": "只点「跳过剧情」（确认弹窗停住）",
+          "name": "只点「跳过剧情」",
           "value": "summary_only",
+          "description": "自动跳过剧情梗概；若弹出「✓ 确认」提示框则停住由你决定",
           "pipeline_override": {
             "AP_StoryDialogConfirm": { "enabled": false },
             "AP_StoryWaitDialogConfirmGone": { "enabled": false }
           }
         },
         {
-          "name": "只点「✓ 确认」（剧情梗概停住）",
+          "name": "只点「✓ 确认」",
           "value": "dialog_only",
+          "description": "自动确认普通提示框；若弹出剧情梗概卡片则停下供查看",
           "pipeline_override": {
             "AP_StoryConfirmSkip": { "enabled": false },
             "AP_StoryWaitConfirmGone": { "enabled": false }
           }
         },
         {
-          "name": "仅点右上箭头（弹窗自选跳不跳）",
+          "name": "仅点跳过箭头",
           "value": "manual",
+          "description": "仅自动触发右上 >> 箭头，弹出确认窗后停住让你自选跳不跳",
           "pipeline_override": {
             "AP_StoryConfirmSkip": { "enabled": false },
             "AP_StoryWaitConfirmGone": { "enabled": false },

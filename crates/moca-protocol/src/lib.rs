@@ -6,8 +6,9 @@ pub use cloud::{
     CloudActionCommand, CloudStrategyRequest, CloudStrategyResponse, UserTier, VipSession,
 };
 pub use interface::{
-    ControllerDecl, ControllerKind, ExecutionMode, GameInterface, OptionDecl, OptionInputType,
-    OptionKind, OptionSelectItem, ResolvedTask, ResourceDecl, TaskDecl, TaskKind, TaskTier,
+    ControllerDecl, ControllerKind, ExecutionMode, GameInterface, GameTheme, OptionDecl,
+    OptionInputType, OptionKind, OptionSelectItem, ResolvedTask, ResourceDecl, TaskDecl, TaskKind,
+    TaskTier,
 };
 pub use profile::{DeviceTarget, InstanceProfile, SavedGameProfile};
 

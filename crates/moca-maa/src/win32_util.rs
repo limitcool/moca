@@ -11,6 +11,7 @@ mod imp {
     use windows_sys::Win32::Security::{
         GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
@@ -18,8 +19,9 @@ mod imp {
     use windows_sys::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, GetClientRect, GetIconInfo,
-        GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2, ICONINFO,
-        SMTO_ABORTIFHUNG, SW_SHOWNORMAL, SendMessageTimeoutW, WM_GETICON,
+        GetSystemMetrics, GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
+        ICONINFO, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG,
+        SW_SHOWNORMAL, SendMessageTimeoutW, SendMessageW, WM_GETICON, WM_SETICON,
     };
 
     pub fn is_current_process_elevated() -> bool {
@@ -77,6 +79,77 @@ mod imp {
             )
         };
         (res as usize) > 32
+    }
+
+    pub fn open_external_url(url: &str) -> Result<(), String> {
+        let op: Vec<u16> = "open\0".encode_utf16().collect();
+        let target: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+        let res = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                op.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (res as usize) > 32 {
+            return Ok(());
+        }
+        let code = res as usize;
+        std::process::Command::new("explorer.exe")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| format!("ShellExecuteW={code}, explorer fallback error={err}"))
+    }
+
+    pub fn apply_window_icon_from_exe(hwnd: isize) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        unsafe {
+            let hmod = GetModuleHandleW(std::ptr::null());
+            if hmod.is_null() {
+                return false;
+            }
+            // MAKEINTRESOURCEW(1): Win32 expects resource ID 1 encoded as a provenance-free pointer.
+            let icon_res_id = std::ptr::without_provenance::<u16>(1);
+            let big_size = GetSystemMetrics(SM_CXICON).max(32);
+            let small_size = GetSystemMetrics(SM_CXSMICON).max(16);
+
+            let big = LoadImageW(
+                hmod as _,
+                icon_res_id,
+                IMAGE_ICON,
+                big_size,
+                big_size,
+                LR_SHARED,
+            );
+            if !big.is_null() {
+                SendMessageW(hwnd as HWND, WM_SETICON, ICON_BIG as usize, big as isize);
+            }
+
+            let small = LoadImageW(
+                hmod as _,
+                icon_res_id,
+                IMAGE_ICON,
+                small_size,
+                small_size,
+                LR_SHARED,
+            );
+            if !small.is_null() {
+                SendMessageW(
+                    hwnd as HWND,
+                    WM_SETICON,
+                    ICON_SMALL as usize,
+                    small as isize,
+                );
+            }
+
+            !big.is_null() || !small.is_null()
+        }
     }
 
     pub fn is_window_process_elevated(hwnd: isize) -> Option<bool> {
@@ -397,9 +470,17 @@ mod imp {
     pub fn get_window_icon_rgba(_hwnd: isize) -> Option<(u32, u32, Vec<u8>)> {
         None
     }
+
+    pub fn open_external_url(_url: &str) -> Result<(), String> {
+        Err("unsupported platform".to_string())
+    }
+
+    pub fn apply_window_icon_from_exe(_hwnd: isize) -> bool {
+        false
+    }
 }
 
 pub use imp::{
-    get_client_size, get_window_icon_rgba, is_current_process_elevated, is_window_process_elevated,
-    relaunch_as_admin,
+    apply_window_icon_from_exe, get_client_size, get_window_icon_rgba, is_current_process_elevated,
+    is_window_process_elevated, open_external_url, relaunch_as_admin,
 };

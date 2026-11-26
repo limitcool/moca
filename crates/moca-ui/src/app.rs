@@ -17,10 +17,9 @@ use moca_runtime::{
 
 use crate::fonts::configure_cjk_fonts;
 use crate::roi_tool::{RoiToolState, save_cropped_template};
-use crate::schema_ui::{SchemaAction, render_game_schema};
+use crate::schema_ui::{SchemaAction, render_task_inspector, render_task_list};
 use crate::theme::{
-    Palette, WindowCaptionKind, apply_moca_theme, card_frame, format_local_hms,
-    handle_borderless_resize, pill_badge, primary_button, segment_button, window_caption_button,
+    ThemeTokens, WindowCaptionKind, format_local_hms, handle_borderless_resize, pill_badge,
 };
 
 const GITHUB_REPO_URL: &str = "https://github.com/limitcool/moca";
@@ -50,8 +49,11 @@ pub struct MocaApp {
     packages: Vec<LoadedGamePackage>,
     moca_icon_texture: Option<TextureHandle>,
     game_icons: HashMap<String, TextureHandle>,
+    banner_textures: HashMap<String, TextureHandle>,
+    theme: ThemeTokens,
     selected_game_idx: usize,
     selected_tasks: Vec<String>,
+    focused_task_id: Option<String>,
     option_values: HashMap<String, serde_json::Value>,
 
     target_tab: TargetTab,
@@ -79,8 +81,19 @@ pub struct MocaApp {
 
 impl MocaApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = cc.window_handle()
+                && let RawWindowHandle::Win32(win32) = handle.as_raw()
+            {
+                moca_maa::apply_window_icon_from_exe(win32.hwnd.get());
+            }
+        }
+
         configure_cjk_fonts(&cc.egui_ctx);
-        apply_moca_theme(&cc.egui_ctx);
+        let theme = ThemeTokens::obsidian();
+        theme.apply(&cc.egui_ctx);
 
         let ctx_clone = cc.egui_ctx.clone();
         let runtime = RuntimeHandle::spawn(Some(Box::new(move || {
@@ -100,8 +113,11 @@ impl MocaApp {
             packages: Vec::new(),
             moca_icon_texture,
             game_icons: HashMap::new(),
+            banner_textures: HashMap::new(),
+            theme,
             selected_game_idx: 0,
             selected_tasks: Vec::new(),
+            focused_task_id: None,
             option_values: HashMap::new(),
             target_tab: TargetTab::Win32,
             adb_devices: Vec::new(),
@@ -143,35 +159,52 @@ impl MocaApp {
 
     fn load_game_icons(&mut self, ctx: &egui::Context) {
         self.game_icons.clear();
+        self.banner_textures.clear();
         for pkg in &self.packages {
-            let Some(icon_rel) = &pkg.manifest.icon else {
-                continue;
-            };
-            let icon_path = pkg.root_dir.join(icon_rel);
-            let Ok(bytes) = std::fs::read(&icon_path) else {
-                continue;
-            };
-            let Ok(img) = image::load_from_memory(&bytes) else {
-                continue;
-            };
-            let rgba = img.to_rgba8();
-            let size = [rgba.width() as usize, rgba.height() as usize];
-            let color_image = ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
             let game_id = pkg.manifest.effective_game_id().to_string();
-            let tex = ctx.load_texture(
-                format!("game_icon_{game_id}"),
-                color_image,
-                TextureOptions::LINEAR,
-            );
-            self.game_icons.insert(game_id, tex);
+            if let Some(icon_rel) = &pkg.manifest.icon
+                && let Ok(bytes) = std::fs::read(pkg.root_dir.join(icon_rel))
+                && let Ok(img) = image::load_from_memory(&bytes)
+            {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                let tex = ctx.load_texture(
+                    format!("game_icon_{game_id}"),
+                    color_image,
+                    TextureOptions::LINEAR,
+                );
+                self.game_icons.insert(game_id.clone(), tex);
+            }
+            if let Some(banner_rel) = pkg
+                .manifest
+                .theme
+                .as_ref()
+                .and_then(|t| t.banner.as_deref())
+                && let Ok(bytes) = std::fs::read(pkg.root_dir.join(banner_rel))
+                && let Ok(img) = image::load_from_memory(&bytes)
+            {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                let tex = ctx.load_texture(
+                    format!("game_banner_{game_id}"),
+                    color_image,
+                    TextureOptions::LINEAR,
+                );
+                self.banner_textures.insert(game_id, tex);
+            }
         }
     }
 
-    fn apply_profile_for_selected_game(&mut self) {
+    fn apply_profile_for_selected_game(&mut self, ctx: &egui::Context) {
         let Some(pkg) = self.packages.get(self.selected_game_idx) else {
             return;
         };
         let game_id = pkg.manifest.effective_game_id().to_string();
+        self.theme = ThemeTokens::from_game_theme(pkg.manifest.theme.as_ref());
+        self.theme.apply(ctx);
+        self.focused_task_id = None;
         match SavedGameProfile::load(profiles_dir(), &game_id) {
             Ok(Some(profile)) => {
                 self.selected_tasks = profile.selected_tasks;
@@ -179,14 +212,12 @@ impl MocaApp {
                 self.execution_mode = profile.execution_mode;
             }
             Ok(None) => {
-                // Default to selecting free batch routine tasks on first load.
+                // Default to enabling all free tasks (including core realtime triggers such as AutoSkipStory).
                 let mut defaults: Vec<String> = pkg
                     .manifest
                     .task
                     .iter()
-                    .filter(|(_, t)| {
-                        t.kind == TaskKind::Batch && t.tier == moca_protocol::TaskTier::Free
-                    })
+                    .filter(|(_, t)| t.tier == moca_protocol::TaskTier::Free)
                     .map(|(id, _)| id.clone())
                     .collect();
                 defaults.sort();
@@ -199,12 +230,23 @@ impl MocaApp {
                     .find(|c| c.kind == ControllerKind::Win32)
                     .map(|c| c.config.execution_mode)
                     .unwrap_or(ExecutionMode::Background);
+                self.save_current_profile();
             }
             Err(err) => {
                 self.push_log(LogLevel::Warn, format!("读取配置失败 ({game_id}): {err}"));
             }
         }
         self.recompute_win32_matches();
+    }
+
+    fn open_repo_url(&mut self, ctx: &egui::Context) {
+        if let Err(err) = moca_maa::open_external_url(GITHUB_REPO_URL) {
+            self.push_log(
+                LogLevel::Warn,
+                format!("打开 GitHub 链接失败 ({err})，尝试默认回退"),
+            );
+            ctx.open_url(egui::OpenUrl::new_tab(GITHUB_REPO_URL));
+        }
     }
 
     fn save_current_profile(&mut self) {
@@ -332,7 +374,7 @@ impl MocaApp {
                         self.selected_game_idx = 0;
                     }
                     self.load_game_icons(ctx);
-                    self.apply_profile_for_selected_game();
+                    self.apply_profile_for_selected_game(ctx);
                 }
                 RuntimeEvent::DevicesDiscovered { adb, win32 } => {
                     self.adb_devices = adb;
@@ -381,6 +423,7 @@ impl MocaApp {
                         self.resolution = resolution;
                         self.runtime
                             .send(RuntimeCommand::CaptureFrame { instance_id });
+                        self.start_enabled_triggers();
                     }
                 }
                 RuntimeEvent::Disconnected { instance_id } => {
@@ -502,7 +545,8 @@ impl eframe::App for MocaApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.render_title_bar(ui);
-        self.render_left_sidebar(ui);
+        self.render_left_task_panel(ui);
+        self.render_middle_inspector_panel(ui);
         self.render_bottom_logs(ui);
         self.render_preview_center(ui);
 
@@ -510,17 +554,145 @@ impl eframe::App for MocaApp {
         ui.painter().rect_stroke(
             win_rect,
             CornerRadius::ZERO,
-            Stroke::new(1.0, Palette::BORDER_STRONG),
+            Stroke::new(1.0, self.theme.border_strong),
             egui::StrokeKind::Inside,
         );
     }
 }
 
 impl MocaApp {
+    fn start_enabled_triggers(&mut self) {
+        let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() else {
+            return;
+        };
+        let bundle_dirs = Self::resolve_bundle_dirs(&pkg);
+        let enabled_triggers: Vec<(String, TaskDecl)> = self
+            .selected_tasks
+            .iter()
+            .filter_map(|tid| {
+                pkg.manifest
+                    .task
+                    .get(tid)
+                    .filter(|t| {
+                        t.kind == TaskKind::Trigger && t.tier == moca_protocol::TaskTier::Free
+                    })
+                    .map(|t| (tid.clone(), t.clone()))
+            })
+            .collect();
+        for (tid, task) in enabled_triggers {
+            let resolved = ResolvedTask {
+                pipeline_override: pkg
+                    .manifest
+                    .resolve_pipeline_override(&task, &self.option_values),
+                decl: task.clone(),
+            };
+            self.push_log(
+                LogLevel::Info,
+                format!("已自动启用持久化实时辅助:「{}」", task.label),
+            );
+            self.runtime.send(RuntimeCommand::SetTriggerActive {
+                instance_id: self.active_instance_id.clone(),
+                task_id: tid,
+                active: true,
+                game_name: pkg.manifest.name.clone(),
+                bundle_dirs: bundle_dirs.clone(),
+                task: Box::new(resolved),
+                mode: self.execution_mode,
+            });
+        }
+    }
+
+    fn handle_schema_action(&mut self, pkg: &LoadedGamePackage, action: Option<SchemaAction>) {
+        let Some(action) = action else {
+            return;
+        };
+        match action {
+            SchemaAction::RunBatchTask(task) => {
+                self.dispatch_tasks(vec![task]);
+            }
+            SchemaAction::ToggleTrigger {
+                task_id,
+                task,
+                active,
+            } => {
+                if !self.connected {
+                    if active {
+                        self.push_log(
+                            LogLevel::Info,
+                            format!(
+                                "已启用「{}」并保存至配置，连接游戏窗口后将自动运行",
+                                task.label
+                            ),
+                        );
+                    }
+                } else {
+                    let bundle_dirs = Self::resolve_bundle_dirs(pkg);
+                    let resolved = ResolvedTask {
+                        pipeline_override: pkg
+                            .manifest
+                            .resolve_pipeline_override(&task, &self.option_values),
+                        decl: task,
+                    };
+                    self.runtime.send(RuntimeCommand::SetTriggerActive {
+                        instance_id: self.active_instance_id.clone(),
+                        task_id,
+                        active,
+                        game_name: pkg.manifest.name.clone(),
+                        bundle_dirs,
+                        task: Box::new(resolved),
+                        mode: self.execution_mode,
+                    });
+                }
+            }
+        }
+    }
+
+    fn hot_reload_active_triggers(
+        &mut self,
+        pkg: &LoadedGamePackage,
+        prev_opts: &HashMap<String, serde_json::Value>,
+    ) {
+        if !self.connected || &self.option_values == prev_opts {
+            return;
+        }
+        let active_ids: Vec<String> = self
+            .active_triggers
+            .iter()
+            .filter_map(|(id, (on, _))| if *on { Some(id.clone()) } else { None })
+            .collect();
+        for tid in active_ids {
+            if let Some(t) = pkg.manifest.task.get(&tid).cloned()
+                && t.option
+                    .iter()
+                    .any(|opt| self.option_values.get(opt) != prev_opts.get(opt))
+            {
+                self.push_log(
+                    LogLevel::Info,
+                    format!("策略选项已更新，正在热重载「{}」规则...", t.label),
+                );
+                let bundle_dirs = Self::resolve_bundle_dirs(pkg);
+                let resolved = ResolvedTask {
+                    pipeline_override: pkg
+                        .manifest
+                        .resolve_pipeline_override(&t, &self.option_values),
+                    decl: t,
+                };
+                self.runtime.send(RuntimeCommand::SetTriggerActive {
+                    instance_id: self.active_instance_id.clone(),
+                    task_id: tid,
+                    active: true,
+                    game_name: pkg.manifest.name.clone(),
+                    bundle_dirs,
+                    task: Box::new(resolved),
+                    mode: self.execution_mode,
+                });
+            }
+        }
+    }
     fn render_title_bar(&mut self, ui: &mut egui::Ui) {
         let header_frame = egui::Frame::new()
-            .fill(Palette::BG_HEADER)
-            .stroke(Stroke::new(1.0, Palette::BORDER))
+            .fill(self.theme.bg_header)
+            .stroke(Stroke::new(1.0, self.theme.border))
             .inner_margin(Margin::symmetric(14, 9));
 
         let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
@@ -529,18 +701,19 @@ impl MocaApp {
             .frame(header_frame)
             .show_separator_line(false)
             .show(ui, |ui| {
-                let bar_resp = ui.interact(
-                    ui.max_rect(),
-                    ui.make_persistent_id("moca_titlebar_drag"),
-                    Sense::click_and_drag(),
-                );
-                if bar_resp.drag_started_by(egui::PointerButton::Primary) {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                let bar_rect = ui.max_rect();
+                if self.theme.starlight_decor {
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(bar_rect.left() + 12.0, bar_rect.bottom() + 8.0),
+                            egui::pos2(bar_rect.right() - 12.0, bar_rect.bottom() + 8.0),
+                        ],
+                        Stroke::new(1.0, self.theme.accent.gamma_multiply(0.28)),
+                    );
                 }
-                if bar_resp.double_clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
-                }
+
+                let mut interactive_right_x = bar_rect.right();
+                let mut open_repo_clicked = false;
 
                 ui.horizontal(|ui| {
                     if let Some(tex) = &self.moca_icon_texture {
@@ -550,39 +723,39 @@ impl MocaApp {
                         egui::RichText::new("Moca")
                             .size(16.5)
                             .strong()
-                            .color(Palette::TEXT_PRIMARY),
+                            .color(self.theme.text_primary),
                     );
                     pill_badge(
                         ui,
                         concat!("v", env!("CARGO_PKG_VERSION")),
-                        Palette::TEXT_SECONDARY,
-                        Palette::BG_CARD,
-                        Palette::BORDER,
+                        self.theme.text_secondary,
+                        self.theme.bg_card,
+                        self.theme.border,
                     );
 
                     if let Some(ver) = &self.maa_version {
                         pill_badge(
                             ui,
                             &format!("● MaaFramework {ver}"),
-                            Palette::SUCCESS,
-                            Palette::SUCCESS_BG,
-                            Palette::SUCCESS.gamma_multiply(0.35),
+                            self.theme.success,
+                            self.theme.success_bg,
+                            self.theme.success.gamma_multiply(0.35),
                         );
                     } else if let Some(err) = &self.maa_error {
                         pill_badge(
                             ui,
                             &format!("▲ MAA 异常: {err}"),
-                            Palette::ERROR,
-                            Palette::ERROR_BG,
-                            Palette::ERROR.gamma_multiply(0.35),
+                            self.theme.error,
+                            self.theme.error_bg,
+                            self.theme.error.gamma_multiply(0.35),
                         );
                     } else {
                         pill_badge(
                             ui,
                             "MAA 初始化中...",
-                            Palette::TEXT_SECONDARY,
-                            Palette::BG_CARD,
-                            Palette::BORDER,
+                            self.theme.text_secondary,
+                            self.theme.bg_card,
+                            self.theme.border,
                         );
                     }
 
@@ -590,14 +763,18 @@ impl MocaApp {
                         pill_badge(
                             ui,
                             "管理员",
-                            Palette::ACCENT_HOVER,
-                            Palette::ACCENT_SOFT_BG,
-                            Palette::ACCENT.gamma_multiply(0.5),
+                            self.theme.accent_hover,
+                            self.theme.accent_soft_bg,
+                            self.theme.accent.gamma_multiply(0.5),
                         );
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if window_caption_button(ui, WindowCaptionKind::Close).clicked() {
+                        let close_resp = self
+                            .theme
+                            .window_caption_button(ui, WindowCaptionKind::Close);
+                        interactive_right_x = interactive_right_x.min(close_resp.rect.left() - 4.0);
+                        if close_resp.clicked() {
                             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                         }
                         let max_kind = if is_maximized {
@@ -605,11 +782,17 @@ impl MocaApp {
                         } else {
                             WindowCaptionKind::Maximize
                         };
-                        if window_caption_button(ui, max_kind).clicked() {
+                        let max_resp = self.theme.window_caption_button(ui, max_kind);
+                        interactive_right_x = interactive_right_x.min(max_resp.rect.left() - 4.0);
+                        if max_resp.clicked() {
                             ui.ctx()
                                 .send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
                         }
-                        if window_caption_button(ui, WindowCaptionKind::Minimize).clicked() {
+                        let min_resp = self
+                            .theme
+                            .window_caption_button(ui, WindowCaptionKind::Minimize);
+                        interactive_right_x = interactive_right_x.min(min_resp.rect.left() - 4.0);
+                        if min_resp.clicked() {
                             ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
                         }
 
@@ -619,100 +802,155 @@ impl MocaApp {
                             egui::RichText::new("GitHub · github.com/limitcool/moca")
                                 .size(12.0)
                                 .strong()
-                                .color(Palette::ACCENT_HOVER),
+                                .color(self.theme.accent_hover),
                         )
-                        .fill(Palette::ACCENT_SOFT_BG)
-                        .stroke(Stroke::new(1.0, Palette::ACCENT.gamma_multiply(0.55)))
+                        .fill(self.theme.accent_soft_bg)
+                        .stroke(Stroke::new(1.0, self.theme.accent.gamma_multiply(0.55)))
                         .corner_radius(CornerRadius::same(99));
-                        if ui
+                        let gh_resp = ui
                             .add(gh_btn)
                             .on_hover_text("在浏览器中打开 Moca GitHub 开源仓库")
-                            .clicked()
-                        {
-                            ui.ctx().open_url(egui::OpenUrl::new_tab(GITHUB_REPO_URL));
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        interactive_right_x = interactive_right_x.min(gh_resp.rect.left() - 6.0);
+                        if gh_resp.clicked() {
+                            open_repo_clicked = true;
                         }
                     });
                 });
+
+                if open_repo_clicked {
+                    self.open_repo_url(ui.ctx());
+                }
+
+                // Only register window-drag sensing on the non-interactive left/spacer region so
+                // it never intercepts clicks on the GitHub link or caption buttons.
+                if interactive_right_x > bar_rect.left() + 8.0 {
+                    let drag_rect = egui::Rect::from_min_max(
+                        bar_rect.min,
+                        egui::pos2(interactive_right_x, bar_rect.max.y),
+                    );
+                    let bar_resp = ui.interact(
+                        drag_rect,
+                        ui.make_persistent_id("moca_titlebar_drag"),
+                        Sense::click_and_drag(),
+                    );
+                    if bar_resp.drag_started_by(egui::PointerButton::Primary) {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                    }
+                    if bar_resp.double_clicked() {
+                        ui.ctx()
+                            .send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
+                    }
+                }
             });
     }
 
-    fn render_left_sidebar(&mut self, ui: &mut egui::Ui) {
+    fn render_left_task_panel(&mut self, ui: &mut egui::Ui) {
         let sidebar_frame = egui::Frame::new()
-            .fill(Palette::BG_SIDEBAR)
-            .stroke(Stroke::new(1.0, Palette::BORDER))
-            .inner_margin(Margin::same(12));
+            .fill(self.theme.bg_sidebar)
+            .stroke(Stroke::new(1.0, self.theme.border))
+            .inner_margin(Margin::same(10));
 
-        egui::Panel::left("left_sidebar")
+        egui::Panel::left("left_task_panel")
             .frame(sidebar_frame)
             .show_separator_line(false)
-            .default_size(400.0)
-            .size_range(340.0..=520.0)
+            .default_size(255.0)
+            .size_range(235.0..=320.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
+                    .id_salt("left_tasks_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         self.render_game_selector_card(ui);
-                        ui.add_space(10.0);
+                        ui.add_space(7.0);
+                        self.render_tasks_list_card(ui);
+                    });
+            });
+    }
+
+    fn render_middle_inspector_panel(&mut self, ui: &mut egui::Ui) {
+        let mid_frame = egui::Frame::new()
+            .fill(self.theme.bg_sidebar)
+            .stroke(Stroke::new(1.0, self.theme.border))
+            .inner_margin(Margin::same(10));
+
+        egui::Panel::left("middle_inspector_panel")
+            .frame(mid_frame)
+            .show_separator_line(false)
+            .default_size(340.0)
+            .size_range(305.0..=440.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("mid_inspector_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                         self.render_connection_card(ui);
-                        ui.add_space(10.0);
-                        self.render_tasks_card(ui);
+                        ui.add_space(7.0);
+                        self.render_task_inspector_card(ui);
                     });
             });
     }
 
     fn render_game_selector_card(&mut self, ui: &mut egui::Ui) {
-        card_frame().show(ui, |ui| {
+        self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("游戏包选择")
-                        .size(14.0)
+                    egui::RichText::new("游戏包")
+                        .size(13.5)
                         .strong()
-                        .color(Palette::TEXT_PRIMARY),
+                        .color(self.theme.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("刷新包").clicked() {
+                    if ui.small_button("刷新").clicked() {
                         self.runtime.send(RuntimeCommand::ReloadGamePackages);
+                    }
+                    if ui.small_button("+ 扩展").clicked() {
+                        self.push_log(
+                            LogLevel::Info,
+                            "将符合 interface.json 规范的游戏包放入 games/<id>/ 目录后点击「刷新」即可接入",
+                        );
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(3.0);
 
             if self.packages.is_empty() {
                 ui.label(
                     egui::RichText::new("未发现游戏包 (games/*/interface.json)")
-                        .color(Palette::WARN),
+                        .color(self.theme.warn),
                 );
                 return;
             }
 
             let mut clicked_idx = None;
             ui.horizontal_wrapped(|ui| {
+                let tile_radius = CornerRadius::same(self.theme.subcard_radius.max(9));
                 for (idx, pkg) in self.packages.iter().enumerate() {
                     let selected = idx == self.selected_game_idx;
                     let game_id = pkg.manifest.effective_game_id();
-                    let tile_size = egui::vec2(64.0, 64.0);
+                    let tile_size = egui::vec2(46.0, 46.0);
                     let (rect, resp) = ui.allocate_exact_size(tile_size, Sense::click());
                     if resp.clicked() {
                         clicked_idx = Some(idx);
                     }
 
                     let bg = if selected {
-                        Palette::ACCENT_SOFT_BG
+                        self.theme.accent_soft_bg
                     } else {
-                        Palette::BG_SUBCARD
+                        self.theme.bg_subcard
                     };
                     let border = if selected {
-                        Stroke::new(2.0, Palette::ACCENT)
+                        Stroke::new(2.0, self.theme.accent)
                     } else if resp.hovered() {
-                        Stroke::new(1.0, Palette::BORDER_STRONG)
+                        Stroke::new(1.0, self.theme.border_strong)
                     } else {
-                        Stroke::new(1.0, Palette::BORDER)
+                        Stroke::new(1.0, self.theme.border)
                     };
 
-                    ui.painter().rect_filled(rect, CornerRadius::same(10), bg);
+                    ui.painter().rect_filled(rect, tile_radius, bg);
                     if let Some(tex) = self.game_icons.get(game_id) {
-                        let inner = rect.shrink(4.0);
+                        let inner = rect.shrink(3.0);
                         ui.painter().image(
                             tex.id(),
                             inner,
@@ -722,66 +960,51 @@ impl MocaApp {
                     } else {
                         let monogram: String = pkg.manifest.name.chars().take(2).collect();
                         ui.painter().text(
-                            rect.center() - egui::vec2(0.0, 6.0),
+                            rect.center(),
                             egui::Align2::CENTER_CENTER,
                             monogram,
-                            egui::FontId::proportional(18.0),
+                            egui::FontId::proportional(15.0),
                             if selected {
                                 Color32::WHITE
                             } else {
-                                Palette::TEXT_PRIMARY
+                                self.theme.text_primary
                             },
-                        );
-                        ui.painter().text(
-                            rect.center() + egui::vec2(0.0, 16.0),
-                            egui::Align2::CENTER_CENTER,
-                            game_id,
-                            egui::FontId::proportional(9.5),
-                            Palette::TEXT_MUTED,
                         );
                     }
                     ui.painter().rect_stroke(
                         rect,
-                        CornerRadius::same(10),
+                        tile_radius,
                         border,
                         egui::StrokeKind::Inside,
                     );
+                    resp.on_hover_text(format!("{} ({game_id})", pkg.manifest.name));
                 }
 
-                let (add_rect, add_resp) =
-                    ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::click());
-                let stroke = if add_resp.hovered() {
-                    Stroke::new(1.0, Palette::BORDER_STRONG)
-                } else {
-                    Stroke::new(1.0, Palette::BORDER)
-                };
-                ui.painter()
-                    .rect_filled(add_rect, CornerRadius::same(10), Palette::BG_INPUT);
-                ui.painter().rect_stroke(
-                    add_rect,
-                    CornerRadius::same(10),
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    add_rect.center() - egui::vec2(0.0, 6.0),
-                    egui::Align2::CENTER_CENTER,
-                    "+",
-                    egui::FontId::proportional(20.0),
-                    Palette::TEXT_MUTED,
-                );
-                ui.painter().text(
-                    add_rect.center() + egui::vec2(0.0, 15.0),
-                    egui::Align2::CENTER_CENTER,
-                    "扩展包",
-                    egui::FontId::proportional(10.0),
-                    Palette::TEXT_MUTED,
-                );
-                if add_resp.clicked() {
-                    self.push_log(
-                        LogLevel::Info,
-                        "将符合 interface.json 规范的游戏包放入 games/<id>/ 目录后点击「刷新包」即可接入",
-                    );
+                if let Some(pkg) = self.packages.get(self.selected_game_idx) {
+                    ui.vertical(|ui| {
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(&pkg.manifest.name)
+                                .size(13.5)
+                                .strong()
+                                .color(self.theme.text_primary),
+                        );
+                        if let Some(theme_name) = &self.theme.theme_name {
+                            pill_badge(
+                                ui,
+                                &format!("★ 皮肤: {theme_name}"),
+                                self.theme.accent_hover,
+                                self.theme.accent_soft_bg,
+                                self.theme.accent.gamma_multiply(0.45),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new(pkg.manifest.effective_game_id())
+                                    .size(11.5)
+                                    .color(self.theme.text_muted),
+                            );
+                        }
+                    });
                 }
             });
 
@@ -789,41 +1012,28 @@ impl MocaApp {
                 && idx != self.selected_game_idx
             {
                 self.selected_game_idx = idx;
-                self.apply_profile_for_selected_game();
-            }
-
-            if let Some(pkg) = self.packages.get(self.selected_game_idx) {
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "当前: {} ({})",
-                        pkg.manifest.name,
-                        pkg.manifest.effective_game_id()
-                    ))
-                    .size(12.5)
-                    .color(Palette::TEXT_SECONDARY),
-                );
+                self.apply_profile_for_selected_game(ui.ctx());
             }
         });
     }
 
     fn render_connection_card(&mut self, ui: &mut egui::Ui) {
-        card_frame().show(ui, |ui| {
+        self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("设备与窗口接入")
                         .size(14.0)
                         .strong()
-                        .color(Palette::TEXT_PRIMARY),
+                        .color(self.theme.text_primary),
                 );
                 if !self.matched_win32_indices.is_empty() && self.target_tab == TargetTab::Win32 {
                     pill_badge(
                         ui,
                         "已智能匹配",
-                        Palette::SUCCESS,
-                        Palette::SUCCESS_BG,
-                        Palette::SUCCESS.gamma_multiply(0.35),
+                        self.theme.success,
+                        self.theme.success_bg,
+                        self.theme.success.gamma_multiply(0.35),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -836,14 +1046,19 @@ impl MocaApp {
             ui.add_space(4.0);
             ui.columns(2, |cols| {
                 cols[0].vertical_centered_justified(|ui| {
-                    if segment_button(ui, self.target_tab == TargetTab::Win32, "Win32 端游")
+                    if self
+                        .theme
+                        .segment_button(ui, self.target_tab == TargetTab::Win32, "Win32 端游")
                         .clicked()
                     {
                         self.target_tab = TargetTab::Win32;
                     }
                 });
                 cols[1].vertical_centered_justified(|ui| {
-                    if segment_button(ui, self.target_tab == TargetTab::Adb, "ADB 模拟器").clicked()
+                    if self
+                        .theme
+                        .segment_button(ui, self.target_tab == TargetTab::Adb, "ADB 模拟器")
+                        .clicked()
                     {
                         self.target_tab = TargetTab::Adb;
                     }
@@ -857,7 +1072,7 @@ impl MocaApp {
                         ui.label(
                             egui::RichText::new("暂未检测到运行中的 ADB 模拟器")
                                 .size(12.5)
-                                .color(Palette::TEXT_MUTED),
+                                .color(self.theme.text_muted),
                         );
                     } else {
                         let label = self
@@ -902,8 +1117,8 @@ impl MocaApp {
                         && !self.process_elevated
                     {
                         egui::Frame::new()
-                            .fill(Palette::WARN_BG)
-                            .stroke(Stroke::new(1.0, Palette::WARN.gamma_multiply(0.5)))
+                            .fill(self.theme.warn_bg)
+                            .stroke(Stroke::new(1.0, self.theme.warn.gamma_multiply(0.5)))
                             .corner_radius(CornerRadius::same(6))
                             .inner_margin(Margin::symmetric(10, 6))
                             .show(ui, |ui| {
@@ -912,7 +1127,7 @@ impl MocaApp {
                                         "⚠ 目标窗口以管理员运行，请以管理员身份重启 Moca",
                                     )
                                     .size(12.0)
-                                    .color(Palette::WARN),
+                                    .color(self.theme.warn),
                                 );
                             });
                     }
@@ -925,25 +1140,29 @@ impl MocaApp {
                 ui.label(
                     egui::RichText::new("执行模式:")
                         .size(12.5)
-                        .color(Palette::TEXT_SECONDARY),
+                        .color(self.theme.text_secondary),
                 );
-                if segment_button(
-                    ui,
-                    self.execution_mode == ExecutionMode::Background,
-                    "后台并行",
-                )
-                .clicked()
+                if self
+                    .theme
+                    .segment_button(
+                        ui,
+                        self.execution_mode == ExecutionMode::Background,
+                        "后台并行",
+                    )
+                    .clicked()
                     && self.execution_mode != ExecutionMode::Background
                 {
                     self.execution_mode = ExecutionMode::Background;
                     mode_changed = true;
                 }
-                if segment_button(
-                    ui,
-                    self.execution_mode == ExecutionMode::ForegroundExclusive,
-                    "前台独占",
-                )
-                .clicked()
+                if self
+                    .theme
+                    .segment_button(
+                        ui,
+                        self.execution_mode == ExecutionMode::ForegroundExclusive,
+                        "前台独占",
+                    )
+                    .clicked()
                     && self.execution_mode != ExecutionMode::ForegroundExclusive
                 {
                     self.execution_mode = ExecutionMode::ForegroundExclusive;
@@ -973,7 +1192,10 @@ impl MocaApp {
 
             ui.add_space(6.0);
             if !self.connected {
-                if primary_button(ui, "连接并抓取画面", true).clicked()
+                if self
+                    .theme
+                    .primary_button(ui, "连接并抓取画面", true)
+                    .clicked()
                     && let Some(target) = self.selected_device_target()
                 {
                     self.runtime.send(RuntimeCommand::Connect {
@@ -985,7 +1207,11 @@ impl MocaApp {
             } else {
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered_justified(|ui| {
-                        if primary_button(ui, "截取实时画面", true).clicked() {
+                        if self
+                            .theme
+                            .primary_button(ui, "截取实时画面", true)
+                            .clicked()
+                        {
                             self.runtime.send(RuntimeCommand::CaptureFrame {
                                 instance_id: self.active_instance_id.clone(),
                             });
@@ -993,11 +1219,11 @@ impl MocaApp {
                     });
                     cols[1].vertical_centered_justified(|ui| {
                         let disconnect = egui::Button::new(
-                            egui::RichText::new("断开连接").color(Palette::ERROR),
+                            egui::RichText::new("断开连接").color(self.theme.error),
                         )
-                        .fill(Palette::ERROR_BG)
-                        .stroke(Stroke::new(1.0, Palette::ERROR.gamma_multiply(0.5)))
-                        .corner_radius(CornerRadius::same(7))
+                        .fill(self.theme.error_bg)
+                        .stroke(Stroke::new(1.0, self.theme.error.gamma_multiply(0.5)))
+                        .corner_radius(CornerRadius::same(self.theme.button_radius))
                         .min_size(egui::vec2(ui.available_width(), 34.0));
                         if ui.add(disconnect).clicked() {
                             self.runtime.send(RuntimeCommand::Disconnect {
@@ -1010,29 +1236,29 @@ impl MocaApp {
         });
     }
 
-    fn render_tasks_card(&mut self, ui: &mut egui::Ui) {
-        card_frame().show(ui, |ui| {
+    fn render_tasks_list_card(&mut self, ui: &mut egui::Ui) {
+        self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("任务与动态表单")
-                        .size(14.0)
+                    egui::RichText::new("任务队列")
+                        .size(13.5)
                         .strong()
-                        .color(Palette::TEXT_PRIMARY),
+                        .color(self.theme.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let any_active =
                         self.tasks_running || self.active_triggers.values().any(|(on, _)| *on);
                     if any_active {
                         let stop_btn = egui::Button::new(
-                            egui::RichText::new("■ 停止任务")
-                                .size(12.0)
+                            egui::RichText::new("■ 停止")
+                                .size(11.5)
                                 .strong()
-                                .color(Palette::ERROR),
+                                .color(self.theme.error),
                         )
-                        .fill(Palette::ERROR_BG)
-                        .stroke(Stroke::new(1.0, Palette::ERROR.gamma_multiply(0.6)))
-                        .corner_radius(CornerRadius::same(6));
+                        .fill(self.theme.error_bg)
+                        .stroke(Stroke::new(1.0, self.theme.error.gamma_multiply(0.6)))
+                        .corner_radius(CornerRadius::same(self.theme.button_radius));
                         if ui.add(stop_btn).clicked() {
                             self.runtime.send(RuntimeCommand::StopTasks {
                                 instance_id: self.active_instance_id.clone(),
@@ -1040,13 +1266,13 @@ impl MocaApp {
                         }
                     } else {
                         let run_btn = egui::Button::new(
-                            egui::RichText::new("▶ 运行选中任务")
-                                .size(12.0)
+                            egui::RichText::new("▶ 运行日常")
+                                .size(11.5)
                                 .strong()
-                                .color(Color32::WHITE),
+                                .color(self.theme.accent_text),
                         )
-                        .fill(Palette::ACCENT)
-                        .corner_radius(CornerRadius::same(6));
+                        .fill(self.theme.accent)
+                        .corner_radius(CornerRadius::same(self.theme.button_radius));
                         if ui.add(run_btn).clicked()
                             && let Some(pkg) = self.packages.get(self.selected_game_idx).cloned()
                         {
@@ -1063,104 +1289,67 @@ impl MocaApp {
                     }
                 });
             });
+
+            if let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() {
+                let prev_tasks = self.selected_tasks.clone();
+                let action = render_task_list(
+                    ui,
+                    &self.theme,
+                    &pkg.manifest,
+                    &mut self.selected_tasks,
+                    &mut self.focused_task_id,
+                    &self.active_triggers,
+                    self.connected,
+                );
+                self.handle_schema_action(&pkg, action);
+                if self.selected_tasks != prev_tasks {
+                    self.save_current_profile();
+                }
+            } else {
+                ui.label(egui::RichText::new("请先加载一个游戏包").color(self.theme.text_muted));
+            }
+        });
+    }
+
+    fn render_task_inspector_card(&mut self, ui: &mut egui::Ui) {
+        self.theme.card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("任务配置详情")
+                    .size(13.5)
+                    .strong()
+                    .color(self.theme.text_primary),
+            );
             ui.add_space(4.0);
 
             if let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() {
                 let prev_tasks = self.selected_tasks.clone();
                 let prev_opts = self.option_values.clone();
-
-                match render_game_schema(
+                let action = render_task_inspector(
                     ui,
+                    &self.theme,
                     &pkg.manifest,
                     &mut self.selected_tasks,
+                    self.focused_task_id.as_deref(),
                     &mut self.option_values,
                     &self.active_triggers,
-                ) {
-                    Some(SchemaAction::RunBatchTask(task)) => {
-                        self.dispatch_tasks(vec![task]);
-                    }
-                    Some(SchemaAction::ToggleTrigger {
-                        task_id,
-                        task,
-                        active,
-                    }) => {
-                        if active && !self.connected {
-                            self.push_log(
-                                LogLevel::Warn,
-                                "请先连接目标窗口/设备后再开启实时辅助开关",
-                            );
-                        } else {
-                            let bundle_dirs = Self::resolve_bundle_dirs(&pkg);
-                            let resolved = ResolvedTask {
-                                pipeline_override: pkg
-                                    .manifest
-                                    .resolve_pipeline_override(&task, &self.option_values),
-                                decl: task,
-                            };
-                            self.runtime.send(RuntimeCommand::SetTriggerActive {
-                                instance_id: self.active_instance_id.clone(),
-                                task_id,
-                                active,
-                                game_name: pkg.manifest.name.clone(),
-                                bundle_dirs,
-                                task: Box::new(resolved),
-                                mode: self.execution_mode,
-                            });
-                        }
-                    }
-                    None => {}
-                }
-
-                if self.option_values != prev_opts && self.connected {
-                    // Hot-reload active triggers whose options changed.
-                    let active_ids: Vec<String> = self
-                        .active_triggers
-                        .iter()
-                        .filter_map(|(id, (on, _))| if *on { Some(id.clone()) } else { None })
-                        .collect();
-                    for tid in active_ids {
-                        if let Some(t) = pkg.manifest.task.get(&tid).cloned()
-                            && t.option
-                                .iter()
-                                .any(|opt| self.option_values.get(opt) != prev_opts.get(opt))
-                        {
-                            self.push_log(
-                                LogLevel::Info,
-                                format!("策略选项已更新，正在热重载「{}」规则...", t.label),
-                            );
-                            let bundle_dirs = Self::resolve_bundle_dirs(&pkg);
-                            let resolved = ResolvedTask {
-                                pipeline_override: pkg
-                                    .manifest
-                                    .resolve_pipeline_override(&t, &self.option_values),
-                                decl: t,
-                            };
-                            self.runtime.send(RuntimeCommand::SetTriggerActive {
-                                instance_id: self.active_instance_id.clone(),
-                                task_id: tid,
-                                active: true,
-                                game_name: pkg.manifest.name.clone(),
-                                bundle_dirs,
-                                task: Box::new(resolved),
-                                mode: self.execution_mode,
-                            });
-                        }
-                    }
-                }
-
+                    self.connected,
+                );
+                self.handle_schema_action(&pkg, action);
+                self.hot_reload_active_triggers(&pkg, &prev_opts);
                 if self.selected_tasks != prev_tasks || self.option_values != prev_opts {
                     self.save_current_profile();
                 }
             } else {
-                ui.label(egui::RichText::new("请先加载一个游戏包").color(Palette::TEXT_MUTED));
+                ui.label(egui::RichText::new("未选中游戏包").color(self.theme.text_muted));
             }
         });
     }
 
     fn render_bottom_logs(&mut self, ui: &mut egui::Ui) {
         let log_frame = egui::Frame::new()
-            .fill(Palette::BG_CONSOLE)
-            .stroke(Stroke::new(1.0, Palette::BORDER))
+            .fill(self.theme.bg_console)
+            .stroke(Stroke::new(1.0, self.theme.border))
             .inner_margin(Margin::symmetric(14, 10));
 
         egui::Panel::bottom("log_panel")
@@ -1174,14 +1363,14 @@ impl MocaApp {
                         egui::RichText::new("运行日志控制台")
                             .size(13.0)
                             .strong()
-                            .color(Palette::TEXT_PRIMARY),
+                            .color(self.theme.text_primary),
                     );
                     pill_badge(
                         ui,
                         &format!("{} 条", self.logs.len()),
-                        Palette::TEXT_MUTED,
-                        Palette::BG_CARD,
-                        Palette::BORDER,
+                        self.theme.text_muted,
+                        self.theme.bg_card,
+                        self.theme.border,
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("清空").clicked() {
@@ -1197,17 +1386,17 @@ impl MocaApp {
                         for entry in &self.logs {
                             let (tag, tag_color, msg_color) = match entry.level {
                                 LogLevel::Info => {
-                                    ("[INFO]", Palette::ACCENT_HOVER, Palette::TEXT_PRIMARY)
+                                    ("[INFO]", self.theme.accent_hover, self.theme.text_primary)
                                 }
-                                LogLevel::Warn => ("[WARN]", Palette::WARN, Palette::WARN),
-                                LogLevel::Error => ("[ERR ]", Palette::ERROR, Palette::ERROR),
+                                LogLevel::Warn => ("[WARN]", self.theme.warn, self.theme.warn),
+                                LogLevel::Error => ("[ERR ]", self.theme.error, self.theme.error),
                             };
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(
                                     egui::RichText::new(&entry.time)
                                         .monospace()
                                         .size(12.0)
-                                        .color(Palette::TEXT_MUTED),
+                                        .color(self.theme.text_muted),
                                 );
                                 ui.label(
                                     egui::RichText::new(tag)
@@ -1228,7 +1417,7 @@ impl MocaApp {
 
     fn render_preview_center(&mut self, ui: &mut egui::Ui) {
         let center_frame = egui::Frame::new()
-            .fill(Palette::BG_APP)
+            .fill(self.theme.bg_app)
             .inner_margin(Margin::same(14));
 
         egui::CentralPanel::default()
@@ -1239,46 +1428,50 @@ impl MocaApp {
                         egui::RichText::new("实时画面 · CV 识别调试画布")
                             .size(15.0)
                             .strong()
-                            .color(Palette::TEXT_PRIMARY),
+                            .color(self.theme.text_primary),
                     );
                     if self.connected {
                         pill_badge(
                             ui,
                             "● 已连接",
-                            Palette::SUCCESS,
-                            Palette::SUCCESS_BG,
-                            Palette::SUCCESS.gamma_multiply(0.35),
+                            self.theme.success,
+                            self.theme.success_bg,
+                            self.theme.success.gamma_multiply(0.35),
                         );
                     } else {
                         pill_badge(
                             ui,
                             "○ 未连接",
-                            Palette::TEXT_MUTED,
-                            Palette::BG_CARD,
-                            Palette::BORDER,
+                            self.theme.text_muted,
+                            self.theme.bg_card,
+                            self.theme.border,
                         );
                     }
                     if let Some((w, h)) = self.resolution {
                         pill_badge(
                             ui,
                             &format!("控制器 {w}×{h}"),
-                            Palette::TEXT_SECONDARY,
-                            Palette::BG_CARD,
-                            Palette::BORDER,
+                            self.theme.text_secondary,
+                            self.theme.bg_card,
+                            self.theme.border,
                         );
                     }
                     if let Some([pw, ph]) = self.preview_size {
                         pill_badge(
                             ui,
                             &format!("帧 {pw}×{ph}"),
-                            Palette::TEXT_SECONDARY,
-                            Palette::BG_CARD,
-                            Palette::BORDER,
+                            self.theme.text_secondary,
+                            self.theme.bg_card,
+                            self.theme.border,
                         );
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if segment_button(ui, self.roi_tool.enabled, "ROI 采图框选").clicked() {
+                        if self
+                            .theme
+                            .segment_button(ui, self.roi_tool.enabled, "ROI 采图框选")
+                            .clicked()
+                        {
                             self.roi_tool.enabled = !self.roi_tool.enabled;
                         }
                     });
@@ -1287,9 +1480,9 @@ impl MocaApp {
                 if self.roi_tool.enabled {
                     ui.add_space(6.0);
                     egui::Frame::new()
-                        .fill(Palette::BG_CARD)
-                        .stroke(Stroke::new(1.0, Palette::BORDER))
-                        .corner_radius(CornerRadius::same(8))
+                        .fill(self.theme.bg_card)
+                        .stroke(Stroke::new(1.0, self.theme.border))
+                        .corner_radius(CornerRadius::same(self.theme.subcard_radius))
                         .inner_margin(Margin::symmetric(10, 6))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -1316,7 +1509,7 @@ impl MocaApp {
                                         ui.label(
                                             egui::RichText::new("在下方画面中按住左键拖拽框选按钮区域")
                                                 .size(12.5)
-                                                .color(Palette::TEXT_SECONDARY),
+                                                .color(self.theme.text_secondary),
                                         );
                                     }
                                 }
@@ -1360,9 +1553,9 @@ impl MocaApp {
                 ui.add_space(8.0);
 
                 let canvas_frame = egui::Frame::new()
-                    .fill(Palette::BG_CONSOLE)
-                    .stroke(Stroke::new(1.0, Palette::BORDER))
-                    .corner_radius(CornerRadius::same(12))
+                    .fill(self.theme.bg_console)
+                    .stroke(Stroke::new(1.0, self.theme.border))
+                    .corner_radius(CornerRadius::same(self.theme.card_radius))
                     .inner_margin(Margin::same(12));
 
                 canvas_frame.show(ui, |ui| {
@@ -1384,6 +1577,24 @@ impl MocaApp {
                             tex_size.y as u32,
                         );
                     } else {
+                        let canvas_rect = ui.available_rect_before_wrap();
+                        if let Some(pkg) = self.packages.get(self.selected_game_idx)
+                            && let Some(banner_tex) =
+                                self.banner_textures.get(pkg.manifest.effective_game_id())
+                        {
+                            ui.painter().image(
+                                banner_tex.id(),
+                                canvas_rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                Color32::from_white_alpha(38),
+                            );
+                        }
+                        self.theme
+                            .paint_starlight_canvas_decor(ui.painter(), canvas_rect);
+
                         let avail = ui.available_size();
                         let card_w = 420.0_f32.min(avail.x - 24.0).max(240.0);
                         let top_pad = ((avail.y - 220.0) * 0.5).max(16.0);
@@ -1392,14 +1603,14 @@ impl MocaApp {
                             let side_pad = ((avail.x - card_w) * 0.5).max(8.0);
                             ui.add_space(side_pad);
                             ui.allocate_ui(egui::vec2(card_w, 220.0), |ui| {
-                                card_frame().show(ui, |ui| {
+                                self.theme.card_frame().show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.vertical_centered(|ui| {
                                         ui.label(
                                             egui::RichText::new("等待画面接入")
                                                 .size(18.0)
                                                 .strong()
-                                                .color(Palette::TEXT_PRIMARY),
+                                                .color(self.theme.text_primary),
                                         );
                                         ui.add_space(8.0);
                                         ui.label(
@@ -1407,22 +1618,27 @@ impl MocaApp {
                                                 "1. 在左侧选择游戏包（已预置《蓝色星原：旅谣》）\n2. 选择 Win32 端游窗口或 ADB 模拟器\n3. 点击「连接并抓取画面」即可运行任务或 ROI 采图",
                                             )
                                             .size(13.0)
-                                            .color(Palette::TEXT_SECONDARY),
+                                            .color(self.theme.text_secondary),
                                         );
                                         ui.add_space(12.0);
-                                        if primary_button(ui, "重新扫描设备与窗口", false).clicked()
+                                        if self.theme.primary_button(ui, "重新扫描设备与窗口", false).clicked()
                                         {
                                             self.runtime.send(RuntimeCommand::ScanDevices);
                                         }
                                         ui.add_space(10.0);
-                                        ui.hyperlink_to(
-                                            egui::RichText::new(
-                                                "开源仓库: https://github.com/limitcool/moca",
-                                            )
-                                            .size(12.5)
-                                            .color(Palette::ACCENT_HOVER),
-                                            GITHUB_REPO_URL,
-                                        );
+                                        if ui
+                                            .add(egui::Link::new(
+                                                egui::RichText::new(
+                                                    "开源仓库: https://github.com/limitcool/moca",
+                                                )
+                                                .size(12.5)
+                                                .color(self.theme.accent_hover),
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            self.open_repo_url(ui.ctx());
+                                        }
                                     });
                                 });
                             });
@@ -1469,7 +1685,8 @@ fn render_win32_window_combo(
             ui.image((tex.id(), egui::vec2(18.0, 18.0)));
         }
         egui::ComboBox::from_id_salt("win32_select")
-            .width(ui.available_width())
+            .width(ui.available_width().max(140.0))
+            .truncate()
             .selected_text(selected_label)
             .show_ui(ui, |ui| {
                 let mut ordered: Vec<usize> = matched_indices.to_vec();

@@ -4,7 +4,7 @@ use moca_protocol::{
     GameInterface, OptionDecl, OptionInputType, OptionKind, TaskDecl, TaskKind, TaskTier,
 };
 
-use crate::theme::{Palette, pill_badge, sub_card_frame, toggle_switch};
+use crate::theme::{ThemeTokens, pill_badge};
 
 pub enum SchemaAction {
     RunBatchTask(TaskDecl),
@@ -15,28 +15,20 @@ pub enum SchemaAction {
     },
 }
 
-/// Render realtime trigger switches and batch tasks declared by a `GameInterface`.
-pub fn render_game_schema(
+/// Render a clean, compact single-line task checklist (MaaEnd / MaaFwApp style).
+pub fn render_task_list(
     ui: &mut egui::Ui,
+    theme: &ThemeTokens,
     manifest: &GameInterface,
     selected_tasks: &mut Vec<String>,
-    option_values: &mut HashMap<String, serde_json::Value>,
+    focused_task_id: &mut Option<String>,
     active_triggers: &HashMap<String, (bool, u32)>,
+    connected: bool,
 ) -> Option<SchemaAction> {
-    let mut triggered = None;
-
-    if let Some(welcome) = &manifest.welcome {
-        ui.label(
-            egui::RichText::new(welcome)
-                .size(12.0)
-                .color(Palette::TEXT_MUTED),
-        );
-        ui.add_space(4.0);
-    }
+    let mut action = None;
 
     let mut grouped: BTreeMap<String, Vec<(&String, &TaskDecl)>> = BTreeMap::new();
     for (task_id, task) in &manifest.task {
-        // Temporarily hide Cloud/VIP tasks in open-source desktop UI.
         if task.tier == TaskTier::Vip {
             continue;
         }
@@ -47,150 +39,290 @@ pub fn render_game_schema(
         tasks.sort_by(|a, b| a.0.cmp(b.0));
     }
 
+    // Ensure a valid default focused task is always selected.
+    if focused_task_id.as_ref().is_none_or(|id| {
+        !manifest
+            .task
+            .get(id)
+            .is_some_and(|t| t.tier != TaskTier::Vip)
+    }) {
+        let fallback = grouped
+            .values()
+            .flatten()
+            .find(|(_, t)| t.kind == TaskKind::Trigger)
+            .or_else(|| grouped.values().flatten().next())
+            .map(|(id, _)| (*id).clone());
+        *focused_task_id = fallback;
+    }
+
     for (group_name, tasks) in grouped {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(group_name)
-                .size(12.0)
+            egui::RichText::new(&group_name)
+                .size(11.5)
                 .strong()
-                .color(Palette::TEXT_SECONDARY),
+                .color(theme.text_muted),
         );
 
         for (task_id, task) in tasks {
-            if task.kind == TaskKind::Trigger {
-                let (mut is_on, hit_count) =
-                    active_triggers.get(task_id).copied().unwrap_or((false, 0));
-                sub_card_frame().show(ui, |ui| {
+            let is_focused = focused_task_id.as_deref() == Some(task_id.as_str());
+            let mut is_enabled = selected_tasks.contains(task_id);
+            let (is_running, hit_count) =
+                active_triggers.get(task_id).copied().unwrap_or((false, 0));
+
+            let row_bg = if is_focused {
+                theme.accent_soft_bg
+            } else {
+                theme.bg_subcard
+            };
+            let row_border = if is_focused {
+                egui::Stroke::new(1.0, theme.accent)
+            } else {
+                egui::Stroke::new(1.0, theme.border)
+            };
+
+            let frame_resp = egui::Frame::new()
+                .fill(row_bg)
+                .stroke(row_border)
+                .corner_radius(egui::CornerRadius::same(theme.subcard_radius))
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        if toggle_switch(ui, &mut is_on).changed() {
-                            triggered = Some(SchemaAction::ToggleTrigger {
-                                task_id: task_id.clone(),
-                                task: task.clone(),
-                                active: is_on,
-                            });
+                        let toggle_resp = theme.toggle_switch(ui, &mut is_enabled);
+                        if toggle_resp.changed() {
+                            if is_enabled {
+                                if !selected_tasks.contains(task_id) {
+                                    selected_tasks.push(task_id.clone());
+                                }
+                            } else {
+                                selected_tasks.retain(|id| id != task_id);
+                            }
+                            *focused_task_id = Some(task_id.clone());
+                            if task.kind == TaskKind::Trigger {
+                                action = Some(SchemaAction::ToggleTrigger {
+                                    task_id: task_id.clone(),
+                                    task: task.clone(),
+                                    active: is_enabled,
+                                });
+                            }
                         }
 
-                        ui.label(egui::RichText::new(&task.label).size(13.5).strong().color(
-                            if is_on {
-                                Palette::TEXT_PRIMARY
-                            } else {
-                                Palette::TEXT_SECONDARY
-                            },
-                        ));
+                        let label_color = if is_focused {
+                            theme.accent_hover
+                        } else if is_enabled {
+                            theme.text_primary
+                        } else {
+                            theme.text_secondary
+                        };
+                        let label_resp = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&task.label)
+                                    .size(13.0)
+                                    .strong()
+                                    .color(label_color),
+                            )
+                            .sense(egui::Sense::click()),
+                        );
+                        if label_resp.clicked() {
+                            *focused_task_id = Some(task_id.clone());
+                        }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if is_on {
-                                let status_text = if hit_count > 0 {
-                                    format!("● 运行中 ({hit_count})")
-                                } else {
-                                    "● 监听中".to_string()
-                                };
-                                pill_badge(
-                                    ui,
-                                    &status_text,
-                                    Palette::SUCCESS,
-                                    Palette::SUCCESS_BG,
-                                    Palette::SUCCESS.gamma_multiply(0.35),
-                                );
-                            } else {
-                                pill_badge(
-                                    ui,
-                                    "未开启",
-                                    Palette::TEXT_MUTED,
-                                    Palette::BG_CARD,
-                                    Palette::BORDER,
+                            if task.kind == TaskKind::Trigger {
+                                if is_running {
+                                    let txt = if hit_count > 0 {
+                                        format!("● {hit_count}")
+                                    } else {
+                                        "● 监听".to_string()
+                                    };
+                                    pill_badge(
+                                        ui,
+                                        &txt,
+                                        theme.success,
+                                        theme.success_bg,
+                                        theme.success.gamma_multiply(0.35),
+                                    );
+                                } else if is_enabled && !connected {
+                                    pill_badge(
+                                        ui,
+                                        "待连接",
+                                        theme.accent_hover,
+                                        theme.accent_soft_bg,
+                                        theme.accent.gamma_multiply(0.35),
+                                    );
+                                }
+                            } else if !task.option.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(if is_focused { "▸" } else { "⚙" })
+                                        .size(11.5)
+                                        .color(if is_focused {
+                                            theme.accent_hover
+                                        } else {
+                                            theme.text_muted
+                                        }),
                                 );
                             }
                         });
                     });
-
-                    if let Some(desc) = &task.description {
-                        ui.label(
-                            egui::RichText::new(desc)
-                                .size(11.5)
-                                .color(Palette::TEXT_MUTED),
-                        );
-                    }
-
-                    if !task.option.is_empty() {
-                        ui.add_space(2.0);
-                        ui.separator();
-                        ui.add_space(2.0);
-                        for opt_key in &task.option {
-                            if let Some(opt_decl) = manifest.option.get(opt_key) {
-                                render_option_widget(ui, opt_key, opt_decl, option_values);
-                            }
-                        }
-                    }
                 });
-                continue;
+
+            if frame_resp.response.interact(egui::Sense::click()).clicked() {
+                *focused_task_id = Some(task_id.clone());
             }
-
-            let mut enabled = selected_tasks.contains(task_id);
-            sub_card_frame().show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    if toggle_switch(ui, &mut enabled).changed() {
-                        if enabled {
-                            if !selected_tasks.contains(task_id) {
-                                selected_tasks.push(task_id.clone());
-                            }
-                        } else {
-                            selected_tasks.retain(|id| id != task_id);
-                        }
-                    }
-
-                    ui.label(
-                        egui::RichText::new(&task.label)
-                            .size(13.5)
-                            .color(if enabled {
-                                Palette::TEXT_PRIMARY
-                            } else {
-                                Palette::TEXT_SECONDARY
-                            }),
-                    );
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let btn = egui::Button::new(
-                            egui::RichText::new("执行")
-                                .size(12.0)
-                                .color(Palette::TEXT_PRIMARY),
-                        )
-                        .min_size(egui::vec2(46.0, 24.0));
-                        if ui.add(btn).clicked() {
-                            triggered = Some(SchemaAction::RunBatchTask(task.clone()));
-                        }
-                    });
-                });
-
-                if let Some(desc) = &task.description {
-                    ui.label(
-                        egui::RichText::new(desc)
-                            .size(11.5)
-                            .color(Palette::TEXT_MUTED),
-                    );
-                }
-
-                if enabled && !task.option.is_empty() {
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
-                    for opt_key in &task.option {
-                        if let Some(opt_decl) = manifest.option.get(opt_key) {
-                            render_option_widget(ui, opt_key, opt_decl, option_values);
-                        }
-                    }
-                }
-            });
         }
     }
 
-    triggered
+    action
+}
+
+/// Render options and actions for the currently focused task in the inspector column.
+#[allow(clippy::too_many_arguments)]
+pub fn render_task_inspector(
+    ui: &mut egui::Ui,
+    theme: &ThemeTokens,
+    manifest: &GameInterface,
+    selected_tasks: &mut Vec<String>,
+    focused_task_id: Option<&str>,
+    option_values: &mut HashMap<String, serde_json::Value>,
+    active_triggers: &HashMap<String, (bool, u32)>,
+    connected: bool,
+) -> Option<SchemaAction> {
+    let Some(task_id) = focused_task_id else {
+        ui.label(
+            egui::RichText::new("请在左侧选择一个任务以查看详情和配置参数")
+                .size(12.5)
+                .color(theme.text_muted),
+        );
+        return None;
+    };
+    let task = manifest.task.get(task_id)?;
+
+    let mut action = None;
+    let mut is_enabled = selected_tasks.contains(&task_id.to_string());
+    let (is_running, hit_count) = active_triggers.get(task_id).copied().unwrap_or((false, 0));
+
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(&task.label)
+                .size(14.5)
+                .strong()
+                .color(theme.text_primary),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if task.kind == TaskKind::Trigger {
+                if is_running {
+                    let txt = if hit_count > 0 {
+                        format!("● 运行中 ({hit_count})")
+                    } else {
+                        "● 监听中".to_string()
+                    };
+                    pill_badge(
+                        ui,
+                        &txt,
+                        theme.success,
+                        theme.success_bg,
+                        theme.success.gamma_multiply(0.35),
+                    );
+                } else if is_enabled && !connected {
+                    pill_badge(
+                        ui,
+                        "已启用 · 待连接",
+                        theme.accent_hover,
+                        theme.accent_soft_bg,
+                        theme.accent.gamma_multiply(0.4),
+                    );
+                } else {
+                    pill_badge(
+                        ui,
+                        "未启用",
+                        theme.text_muted,
+                        theme.bg_subcard,
+                        theme.border,
+                    );
+                }
+            } else {
+                let run_btn = egui::Button::new(
+                    egui::RichText::new("▶ 单独执行")
+                        .size(11.5)
+                        .strong()
+                        .color(theme.accent_text),
+                )
+                .fill(theme.accent)
+                .corner_radius(egui::CornerRadius::same(theme.button_radius))
+                .min_size(egui::vec2(72.0, 24.0));
+                if ui.add(run_btn).clicked() {
+                    action = Some(SchemaAction::RunBatchTask(task.clone()));
+                }
+            }
+        });
+    });
+
+    if let Some(desc) = &task.description {
+        ui.add_space(2.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(desc)
+                    .size(12.0)
+                    .color(theme.text_secondary),
+            )
+            .wrap(),
+        );
+    }
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if theme.toggle_switch(ui, &mut is_enabled).changed() {
+            let tid = task_id.to_string();
+            if is_enabled {
+                if !selected_tasks.contains(&tid) {
+                    selected_tasks.push(tid.clone());
+                }
+            } else {
+                selected_tasks.retain(|id| id != &tid);
+            }
+            if task.kind == TaskKind::Trigger {
+                action = Some(SchemaAction::ToggleTrigger {
+                    task_id: tid,
+                    task: task.clone(),
+                    active: is_enabled,
+                });
+            }
+        }
+        let hint = match (task.kind, is_enabled) {
+            (TaskKind::Trigger, true) => "已开启（连接窗口后自动运行并保存）",
+            (TaskKind::Trigger, false) => "开启实时辅助监听",
+            (TaskKind::Batch, true) => "已勾选加入批处理队列",
+            (TaskKind::Batch, false) => "勾选加入批处理队列",
+        };
+        ui.label(egui::RichText::new(hint).size(12.0).color(theme.text_muted));
+    });
+
+    if !task.option.is_empty() {
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+        for opt_key in &task.option {
+            if let Some(opt_decl) = manifest.option.get(opt_key) {
+                render_option_widget(ui, theme, opt_key, opt_decl, option_values);
+                ui.add_space(4.0);
+            }
+        }
+    } else {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("该任务当前无需额外配置参数")
+                .size(11.5)
+                .color(theme.text_muted),
+        );
+    }
+
+    action
 }
 
 fn render_option_widget(
     ui: &mut egui::Ui,
+    theme: &ThemeTokens,
     opt_key: &str,
     decl: &OptionDecl,
     values: &mut HashMap<String, serde_json::Value>,
@@ -204,13 +336,59 @@ fn render_option_widget(
         OptionKind::Boolean => {
             let mut val = current.as_bool().unwrap_or(false);
             ui.horizontal(|ui| {
-                if toggle_switch(ui, &mut val).changed() {
+                if theme.toggle_switch(ui, &mut val).changed() {
                     *current = serde_json::Value::Bool(val);
                 }
-                ui.label(egui::RichText::new(label).color(Palette::TEXT_SECONDARY));
+                ui.label(
+                    egui::RichText::new(label)
+                        .size(12.5)
+                        .color(theme.text_secondary),
+                );
             });
         }
         OptionKind::Select => {
+            if (2..=4).contains(&decl.items.len()) {
+                ui.label(
+                    egui::RichText::new(label)
+                        .size(12.5)
+                        .strong()
+                        .color(theme.text_secondary),
+                );
+                ui.add_space(3.0);
+
+                let mut selected_desc: Option<&str> = None;
+                for row in decl.items.chunks(2) {
+                    ui.columns(2, |cols| {
+                        for (col_idx, item) in row.iter().enumerate() {
+                            let item_val =
+                                item.value.as_ref().cloned().unwrap_or_else(|| {
+                                    serde_json::Value::String(item.name.clone())
+                                });
+                            let selected = &item_val == current;
+                            if selected {
+                                selected_desc = item.description.as_deref();
+                            }
+                            let text = item.label.as_deref().unwrap_or(&item.name);
+                            cols[col_idx].vertical_centered_justified(|ui| {
+                                if theme.segment_button(ui, selected, text).clicked() {
+                                    *current = item_val;
+                                }
+                            });
+                        }
+                    });
+                }
+                if let Some(desc) = selected_desc {
+                    ui.add_space(2.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(desc).size(11.5).color(theme.text_muted),
+                        )
+                        .wrap(),
+                    );
+                }
+                return;
+            }
+
             let selected_text = decl
                 .items
                 .iter()
@@ -225,28 +403,34 @@ fn render_option_widget(
                 .map(|item| item.label.as_deref().unwrap_or(&item.name).to_string())
                 .unwrap_or_else(|| "请选择".to_string());
 
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(label).color(Palette::TEXT_SECONDARY));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::ComboBox::from_id_salt(format!("combo_{opt_key}"))
-                        .width(ui.available_width().min(220.0))
-                        .selected_text(selected_text)
-                        .show_ui(ui, |ui| {
-                            for item in &decl.items {
-                                let item_val = item.value.as_ref().cloned().unwrap_or_else(|| {
-                                    serde_json::Value::String(item.name.clone())
-                                });
-                                let text = item.label.as_deref().unwrap_or(&item.name);
-                                if ui.selectable_label(&item_val == current, text).clicked() {
-                                    *current = item_val;
-                                }
-                            }
-                        });
+            ui.label(
+                egui::RichText::new(label)
+                    .size(12.5)
+                    .color(theme.text_secondary),
+            );
+            egui::ComboBox::from_id_salt(format!("combo_{opt_key}"))
+                .width(ui.available_width())
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for item in &decl.items {
+                        let item_val = item
+                            .value
+                            .as_ref()
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::Value::String(item.name.clone()));
+                        let text = item.label.as_deref().unwrap_or(&item.name);
+                        if ui.selectable_label(&item_val == current, text).clicked() {
+                            *current = item_val;
+                        }
+                    }
                 });
-            });
         }
         OptionKind::Checkbox => {
-            ui.label(egui::RichText::new(label).color(Palette::TEXT_SECONDARY));
+            ui.label(
+                egui::RichText::new(label)
+                    .size(12.5)
+                    .color(theme.text_secondary),
+            );
             let mut arr = current.as_array().cloned().unwrap_or_default();
             ui.horizontal_wrapped(|ui| {
                 for item in &decl.items {
@@ -270,17 +454,19 @@ fn render_option_widget(
         }
         OptionKind::Input => {
             let mut text = current.as_str().unwrap_or_default().to_string();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(label).color(Palette::TEXT_SECONDARY));
-                let mut edit =
-                    egui::TextEdit::singleline(&mut text).desired_width(ui.available_width());
-                if decl.input_type == OptionInputType::Password {
-                    edit = edit.password(true);
-                }
-                if ui.add(edit).changed() {
-                    *current = serde_json::Value::String(text);
-                }
-            });
+            ui.label(
+                egui::RichText::new(label)
+                    .size(12.5)
+                    .color(theme.text_secondary),
+            );
+            let mut edit =
+                egui::TextEdit::singleline(&mut text).desired_width(ui.available_width());
+            if decl.input_type == OptionInputType::Password {
+                edit = edit.password(true);
+            }
+            if ui.add(edit).changed() {
+                *current = serde_json::Value::String(text);
+            }
         }
     }
 }

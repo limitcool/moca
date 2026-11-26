@@ -134,6 +134,8 @@ pub struct OptionSelectItem {
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
     pub pipeline_override: Option<serde_json::Value>,
 }
 
@@ -155,7 +157,54 @@ pub struct OptionDecl {
     pub input_type: OptionInputType,
 }
 
-/// Game package manifest compatible with MaaFramework ProjectInterface v2 + Moca VIP extensions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GameTheme {
+    /// Built-in preset name, e.g. `"obsidian"` (default) or `"azur_star"`.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Optional theme display name shown in UI badge.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional background banner path relative to game package root.
+    #[serde(default)]
+    pub banner: Option<String>,
+    #[serde(default)]
+    pub accent: Option<String>,
+    #[serde(default)]
+    pub accent_hover: Option<String>,
+    #[serde(default)]
+    pub accent_soft_bg: Option<String>,
+    #[serde(default)]
+    pub accent_text: Option<String>,
+    #[serde(default)]
+    pub bg_app: Option<String>,
+    #[serde(default)]
+    pub bg_sidebar: Option<String>,
+    #[serde(default)]
+    pub bg_header: Option<String>,
+    #[serde(default)]
+    pub bg_card: Option<String>,
+    #[serde(default)]
+    pub bg_subcard: Option<String>,
+    #[serde(default)]
+    pub bg_input: Option<String>,
+    #[serde(default)]
+    pub bg_console: Option<String>,
+    #[serde(default)]
+    pub border: Option<String>,
+    #[serde(default)]
+    pub border_strong: Option<String>,
+    #[serde(default)]
+    pub card_radius: Option<u8>,
+    #[serde(default)]
+    pub subcard_radius: Option<u8>,
+    #[serde(default)]
+    pub button_radius: Option<u8>,
+    #[serde(default)]
+    pub starlight_decor: Option<bool>,
+}
+
+/// Game package manifest compatible with MaaFramework ProjectInterface v2 + Moca extensions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameInterface {
     pub version: String,
@@ -172,6 +221,8 @@ pub struct GameInterface {
     pub about: Option<String>,
     #[serde(default)]
     pub license: Option<String>,
+    #[serde(default)]
+    pub theme: Option<GameTheme>,
     #[serde(default)]
     pub languages: HashMap<String, String>,
     #[serde(default)]

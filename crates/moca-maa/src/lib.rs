@@ -11,7 +11,9 @@ use thiserror::Error;
 
 pub use discovery::{DiscoveredAdb, DiscoveredWin32, discover_adb_devices, discover_win32_windows};
 pub use session::{MaaSession, SessionProgressEvent, load_bundles, run_task_entry};
-pub use win32_util::{is_current_process_elevated, relaunch_as_admin};
+pub use win32_util::{
+    apply_window_icon_from_exe, is_current_process_elevated, open_external_url, relaunch_as_admin,
+};
 
 #[derive(Debug, Error)]
 pub enum MaaAdapterError {
