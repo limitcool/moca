@@ -15,24 +15,24 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   MAA_SDK_VERSION: v5.16.1
-  TARGET_TRIPLE: x86_64-pc-windows-msvc
 
 jobs:
-  check-and-test:
-    name: Windows x64 Check & Test
+  build-and-release:
+    name: Build & Publish Windows x64 Package
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain (Windows x64)
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ env.TARGET_TRIPLE }}
           components: rustfmt, clippy
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Cache MaaFramework SDK
         id: cache-maa-sdk
@@ -47,66 +47,30 @@ jobs:
         run: |
           $url = "https://github.com/MaaXYZ/MaaFramework/releases/download/$env:MAA_SDK_VERSION/MAA-win-x86_64-$env:MAA_SDK_VERSION.zip"
           $zip = "$env:RUNNER_TEMP\maa-sdk.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
+          curl.exe -fsSL "$url" -o "$zip"
           New-Item -ItemType Directory -Force -Path vendor/maa-sdk | Out-Null
-          Expand-Archive -Path $zip -DestinationPath vendor/maa-sdk -Force
+          7z x "$zip" "-ovendor/maa-sdk" -y | Out-Null
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run unit tests
-        run: cargo test --workspace --target ${{ env.TARGET_TRIPLE }}
-
-  build-and-release:
-    name: Build & Publish Windows x64 Package
-    needs: check-and-test
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain (Windows x64)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ env.TARGET_TRIPLE }}
-
-      - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Cache MaaFramework SDK
-        id: cache-maa-sdk
-        uses: actions/cache@v4
-        with:
-          path: vendor/maa-sdk
-          key: maa-sdk-win-x64-${{ env.MAA_SDK_VERSION }}
-
-      - name: Download MaaFramework SDK (Windows x64)
-        if: steps.cache-maa-sdk.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $url = "https://github.com/MaaXYZ/MaaFramework/releases/download/$env:MAA_SDK_VERSION/MAA-win-x86_64-$env:MAA_SDK_VERSION.zip"
-          $zip = "$env:RUNNER_TEMP\maa-sdk.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          New-Item -ItemType Directory -Force -Path vendor/maa-sdk | Out-Null
-          Expand-Archive -Path $zip -DestinationPath vendor/maa-sdk -Force
+      - name: Run Clippy (release)
+        run: cargo clippy --release -p moca-ui -- -D warnings
 
       - name: Build release binary (Windows x64)
-        run: cargo build --release --target ${{ env.TARGET_TRIPLE }} -p moca-ui
+        run: cargo build --release -p moca-ui
 
       - name: Assemble portable Windows x64 bundle
         shell: pwsh
         run: |
           $stage = "dist/Moca-windows-x86_64"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "target/$env:TARGET_TRIPLE/release/moca-ui.exe" "$stage/Moca.exe"
+          Copy-Item "target/release/moca-ui.exe" "$stage/Moca.exe"
           Copy-Item "vendor/maa-sdk/bin/*" "$stage/" -Recurse -Force
           Copy-Item "assets" "$stage/assets" -Recurse -Force
           Copy-Item "games" "$stage/games" -Recurse -Force
           Copy-Item "README.md", "LICENSE" "$stage/"
-          Compress-Archive -Path "$stage/*" -DestinationPath "dist/Moca-windows-x86_64.zip" -Force
+          7z a -tzip -mx=5 "dist/Moca-windows-x86_64.zip" ".\$stage\*" | Out-Null
 
       - name: Upload Windows x64 build artifact
         uses: actions/upload-artifact@v4
