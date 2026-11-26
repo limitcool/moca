@@ -8,7 +8,7 @@
   "license": "Apache-2.0",
   "theme": {
     "preset": "azur_star",
-    "name": "星原星盘"
+    "name": "星原晴空蓝"
   },
   "resource": [
     {
@@ -109,11 +109,13 @@
       "items": [
         {
           "name": "全自动跳过",
+          "label": "全自动",
           "value": "all",
           "description": "自动点右上 >> 箭头及「跳过剧情 / ✓ 确认」全部弹窗"
         },
         {
           "name": "只点「跳过剧情」",
+          "label": "跳梗概",
           "value": "summary_only",
           "description": "自动跳过剧情梗概；若弹出「✓ 确认」提示框则停住由你决定",
           "pipeline_override": {
@@ -123,6 +125,7 @@
         },
         {
           "name": "只点「✓ 确认」",
+          "label": "点确认",
           "value": "dialog_only",
           "description": "自动确认普通提示框；若弹出剧情梗概卡片则停下供查看",
           "pipeline_override": {
@@ -132,6 +135,7 @@
         },
         {
           "name": "仅点跳过箭头",
+          "label": "仅箭头",
           "value": "manual",
           "description": "仅自动触发右上 >> 箭头，弹出确认窗后停住让你自选跳不跳",
           "pipeline_override": {
@@ -156,10 +160,10 @@
       "label": "目标体力副本",
       "default": "exp",
       "items": [
-        { "name": "角色经验素材本", "value": "exp" },
-        { "name": "突破结晶副本", "value": "ascension" },
-        { "name": "奇波因子养成副本", "value": "kibo_factor" },
-        { "name": "星币（金币）副本", "value": "gold" }
+        { "name": "角色经验素材本", "label": "经验本", "value": "exp" },
+        { "name": "突破结晶副本", "label": "突破晶", "value": "ascension" },
+        { "name": "奇波因子养成副本", "label": "奇波本", "value": "kibo_factor" },
+        { "name": "星币（金币）副本", "label": "星币本", "value": "gold" }
       ]
     },
     "stamina_runs": {
@@ -167,10 +171,10 @@
       "label": "刷取轮次上限",
       "default": 4,
       "items": [
-        { "name": "清光当前体力", "value": 99 },
-        { "name": "固定 2 轮", "value": 2 },
-        { "name": "固定 4 轮", "value": 4 },
-        { "name": "固定 6 轮", "value": 6 }
+        { "name": "清光当前体力", "label": "清光", "value": 99 },
+        { "name": "固定 2 轮", "label": "2 轮", "value": 2 },
+        { "name": "固定 4 轮", "label": "4 轮", "value": 4 },
+        { "name": "固定 6 轮", "label": "6 轮", "value": 6 }
       ]
     },
     "auto_use_potion": {
@@ -188,9 +192,9 @@
       "label": "排班优化目标",
       "default": "gear_mat",
       "items": [
-        { "name": "装备锻造材料优先", "value": "gear_mat" },
-        { "name": "奇波口粮与耕作平衡", "value": "food_balance" },
-        { "name": "基建升级加速优先", "value": "upgrade" }
+        { "name": "装备锻造材料优先", "label": "装备材料", "value": "gear_mat" },
+        { "name": "奇波口粮与耕作平衡", "label": "口粮平衡", "value": "food_balance" },
+        { "name": "基建升级加速优先", "label": "基建加速", "value": "upgrade" }
       ]
     },
     "kibo_target_element": {
@@ -198,9 +202,9 @@
       "label": "目标奇波属性",
       "default": "all",
       "items": [
-        { "name": "全属性（高星/闪光优先）", "value": "all" },
-        { "name": "火 / 雷输出系", "value": "fire_thunder" },
-        { "name": "水 / 木辅助生产系", "value": "water_wood" }
+        { "name": "全属性（高星/闪光优先）", "label": "全属性", "value": "all" },
+        { "name": "火 / 雷输出系", "label": "火雷输出", "value": "fire_thunder" },
+        { "name": "水 / 木辅助生产系", "label": "水木生产", "value": "water_wood" }
       ]
     },
     "kibo_shiny_only": {
@@ -213,8 +217,8 @@
       "label": "高难循环风格",
       "default": "safe",
       "items": [
-        { "name": "稳健生存优先（自动闪避）", "value": "safe" },
-        { "name": "极限竞速输出", "value": "burst" }
+        { "name": "稳健生存优先（自动闪避）", "label": "稳健闪避", "value": "safe" },
+        { "name": "极限竞速输出", "label": "极限输出", "value": "burst" }
       ]
     }
   }

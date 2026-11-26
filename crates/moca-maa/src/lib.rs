@@ -13,6 +13,7 @@ pub use discovery::{DiscoveredAdb, DiscoveredWin32, discover_adb_devices, discov
 pub use session::{MaaSession, SessionProgressEvent, load_bundles, run_task_entry};
 pub use win32_util::{
     apply_window_icon_from_exe, is_current_process_elevated, open_external_url, relaunch_as_admin,
+    set_app_user_model_id,
 };
 
 #[derive(Debug, Error)]

@@ -1,5 +1,6 @@
 mod app;
 mod fonts;
+mod icons;
 mod roi_tool;
 mod schema_ui;
 mod theme;
@@ -33,6 +34,8 @@ fn main() -> eframe::Result {
     {
         return Ok(());
     }
+
+    moca_maa::set_app_user_model_id("cool.limit.moca.desktop");
 
     tracing_subscriber::fmt()
         .with_env_filter(

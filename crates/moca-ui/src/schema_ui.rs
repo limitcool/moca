@@ -4,7 +4,8 @@ use moca_protocol::{
     GameInterface, OptionDecl, OptionInputType, OptionKind, TaskDecl, TaskKind, TaskTier,
 };
 
-use crate::theme::{ThemeTokens, pill_badge};
+use crate::icons::{UiIcon, allocate_and_paint_icon};
+use crate::theme::{IconButtonVariant, SegmentedOption, ThemeTokens, pill_badge};
 
 pub enum SchemaAction {
     RunBatchTask(TaskDecl),
@@ -71,21 +72,21 @@ pub fn render_task_list(
                 active_triggers.get(task_id).copied().unwrap_or((false, 0));
 
             let row_bg = if is_focused {
-                theme.accent_soft_bg
+                theme.accent_soft_bg.gamma_multiply(0.85)
             } else {
                 theme.bg_subcard
             };
             let row_border = if is_focused {
-                egui::Stroke::new(1.0, theme.accent)
+                egui::Stroke::new(1.0, theme.accent.gamma_multiply(0.48))
             } else {
-                egui::Stroke::new(1.0, theme.border)
+                egui::Stroke::new(1.0, theme.border.gamma_multiply(0.35))
             };
 
             let frame_resp = egui::Frame::new()
                 .fill(row_bg)
                 .stroke(row_border)
                 .corner_radius(egui::CornerRadius::same(theme.subcard_radius))
-                .inner_margin(egui::Margin::symmetric(8, 6))
+                .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -153,19 +154,34 @@ pub fn render_task_list(
                                     );
                                 }
                             } else if !task.option.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(if is_focused { "▸" } else { "⚙" })
-                                        .size(11.5)
-                                        .color(if is_focused {
-                                            theme.accent_hover
-                                        } else {
-                                            theme.text_muted
-                                        }),
+                                allocate_and_paint_icon(
+                                    ui,
+                                    if is_focused {
+                                        UiIcon::Sliders
+                                    } else {
+                                        UiIcon::Settings
+                                    },
+                                    13.5,
+                                    if is_focused {
+                                        theme.accent_hover
+                                    } else {
+                                        theme.text_muted
+                                    },
                                 );
                             }
                         });
                     });
                 });
+
+            if is_focused {
+                let r = frame_resp.response.rect;
+                let bar = egui::Rect::from_min_max(
+                    egui::pos2(r.left() + 1.5, r.top() + 7.0),
+                    egui::pos2(r.left() + 4.5, r.bottom() - 7.0),
+                );
+                ui.painter()
+                    .rect_filled(bar, egui::CornerRadius::same(2), theme.accent_hover);
+            }
 
             if frame_resp.response.interact(egui::Sense::click()).clicked() {
                 *focused_task_id = Some(task_id.clone());
@@ -242,16 +258,18 @@ pub fn render_task_inspector(
                     );
                 }
             } else {
-                let run_btn = egui::Button::new(
-                    egui::RichText::new("▶ 单独执行")
-                        .size(11.5)
-                        .strong()
-                        .color(theme.accent_text),
-                )
-                .fill(theme.accent)
-                .corner_radius(egui::CornerRadius::same(theme.button_radius))
-                .min_size(egui::vec2(72.0, 24.0));
-                if ui.add(run_btn).clicked() {
+                if theme
+                    .icon_button(
+                        ui,
+                        Some(UiIcon::Play),
+                        "单独执行",
+                        None,
+                        IconButtonVariant::Primary,
+                        26.0,
+                        false,
+                    )
+                    .clicked()
+                {
                     action = Some(SchemaAction::RunBatchTask(task.clone()));
                 }
             }
@@ -354,37 +372,65 @@ fn render_option_widget(
                         .strong()
                         .color(theme.text_secondary),
                 );
-                ui.add_space(3.0);
+                ui.add_space(4.0);
 
-                let mut selected_desc: Option<&str> = None;
-                for row in decl.items.chunks(2) {
-                    ui.columns(2, |cols| {
-                        for (col_idx, item) in row.iter().enumerate() {
+                let entries: Vec<(String, serde_json::Value, bool, Option<&str>)> =
+                    decl.items
+                        .iter()
+                        .map(|item| {
                             let item_val =
                                 item.value.as_ref().cloned().unwrap_or_else(|| {
                                     serde_json::Value::String(item.name.clone())
                                 });
                             let selected = &item_val == current;
-                            if selected {
-                                selected_desc = item.description.as_deref();
-                            }
-                            let text = item.label.as_deref().unwrap_or(&item.name);
-                            cols[col_idx].vertical_centered_justified(|ui| {
-                                if theme.segment_button(ui, selected, text).clicked() {
-                                    *current = item_val;
-                                }
-                            });
-                        }
-                    });
-                }
-                if let Some(desc) = selected_desc {
-                    ui.add_space(2.0);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(desc).size(11.5).color(theme.text_muted),
-                        )
-                        .wrap(),
-                    );
+                            let text = item.label.as_deref().unwrap_or(&item.name).to_string();
+                            (text, item_val, selected, item.description.as_deref())
+                        })
+                        .collect();
+
+                let selected_desc = entries
+                    .iter()
+                    .find(|(_, _, sel, _)| *sel)
+                    .and_then(|(_, _, _, desc)| *desc);
+
+                let all_compact = entries
+                    .iter()
+                    .all(|(text, _, _, _)| text.chars().count() <= 5);
+                if all_compact {
+                    let seg_options: Vec<SegmentedOption<'_>> = entries
+                        .iter()
+                        .map(|(text, _, sel, _)| SegmentedOption {
+                            label: text.as_str(),
+                            icon: None,
+                            selected: *sel,
+                        })
+                        .collect();
+
+                    if let Some(clicked_idx) = theme.segmented_row(ui, &seg_options)
+                        && let Some((_, new_val, _, _)) = entries.get(clicked_idx)
+                    {
+                        *current = new_val.clone();
+                    }
+
+                    if let Some(desc) = selected_desc {
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(desc).size(11.5).color(theme.text_muted),
+                            )
+                            .wrap(),
+                        );
+                    }
+                } else {
+                    let radio_options: Vec<(&str, Option<&str>, bool)> = entries
+                        .iter()
+                        .map(|(text, _, sel, desc)| (text.as_str(), *desc, *sel))
+                        .collect();
+                    if let Some(clicked_idx) = theme.radio_list_group(ui, &radio_options)
+                        && let Some((_, new_val, _, _)) = entries.get(clicked_idx)
+                    {
+                        *current = new_val.clone();
+                    }
                 }
                 return;
             }

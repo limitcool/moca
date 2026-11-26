@@ -16,12 +16,14 @@ mod imp {
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
     };
-    use windows_sys::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
+    use windows_sys::Win32::UI::Shell::{
+        ExtractIconExW, SetCurrentProcessExplicitAppUserModelID, ShellExecuteW,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, GetClientRect, GetIconInfo,
         GetSystemMetrics, GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
         ICONINFO, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG,
-        SW_SHOWNORMAL, SendMessageTimeoutW, SendMessageW, WM_GETICON, WM_SETICON,
+        SW_SHOWNORMAL, SendMessageTimeoutW, SendMessageW, SetClassLongPtrW, WM_GETICON, WM_SETICON,
     };
 
     pub fn is_current_process_elevated() -> bool {
@@ -105,6 +107,13 @@ mod imp {
             .map_err(|err| format!("ShellExecuteW={code}, explorer fallback error={err}"))
     }
 
+    pub fn set_app_user_model_id(app_id: &str) {
+        let wide: Vec<u16> = app_id.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let _ = SetCurrentProcessExplicitAppUserModelID(wide.as_ptr());
+        }
+    }
+
     pub fn apply_window_icon_from_exe(hwnd: isize) -> bool {
         if hwnd == 0 {
             return false;
@@ -128,6 +137,7 @@ mod imp {
                 LR_SHARED,
             );
             if !big.is_null() {
+                SetClassLongPtrW(hwnd as HWND, GCLP_HICON, big as isize);
                 SendMessageW(hwnd as HWND, WM_SETICON, ICON_BIG as usize, big as isize);
             }
 
@@ -140,6 +150,7 @@ mod imp {
                 LR_SHARED,
             );
             if !small.is_null() {
+                SetClassLongPtrW(hwnd as HWND, GCLP_HICONSM, small as isize);
                 SendMessageW(
                     hwnd as HWND,
                     WM_SETICON,
@@ -478,9 +489,11 @@ mod imp {
     pub fn apply_window_icon_from_exe(_hwnd: isize) -> bool {
         false
     }
+
+    pub fn set_app_user_model_id(_app_id: &str) {}
 }
 
 pub use imp::{
     apply_window_icon_from_exe, get_client_size, get_window_icon_rgba, is_current_process_elevated,
-    is_window_process_elevated, open_external_url, relaunch_as_admin,
+    is_window_process_elevated, open_external_url, relaunch_as_admin, set_app_user_model_id,
 };

@@ -16,10 +16,12 @@ use moca_runtime::{
 };
 
 use crate::fonts::configure_cjk_fonts;
+use crate::icons::{UiIcon, allocate_and_paint_icon};
 use crate::roi_tool::{RoiToolState, save_cropped_template};
 use crate::schema_ui::{SchemaAction, render_task_inspector, render_task_list};
 use crate::theme::{
-    ThemeTokens, WindowCaptionKind, format_local_hms, handle_borderless_resize, pill_badge,
+    IconButtonVariant, SegmentedOption, ThemeTokens, WindowCaptionKind, format_local_hms,
+    handle_borderless_resize, pill_badge, pill_badge_with_icon,
 };
 
 const GITHUB_REPO_URL: &str = "https://github.com/limitcool/moca";
@@ -45,6 +47,8 @@ pub struct MocaApp {
     maa_version: Option<String>,
     maa_error: Option<String>,
     process_elevated: bool,
+    win32_hwnd: Option<isize>,
+    icon_sync_remaining: u8,
 
     packages: Vec<LoadedGamePackage>,
     moca_icon_texture: Option<TextureHandle>,
@@ -81,13 +85,16 @@ pub struct MocaApp {
 
 impl MocaApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut win32_hwnd = None;
         #[cfg(target_os = "windows")]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(handle) = cc.window_handle()
                 && let RawWindowHandle::Win32(win32) = handle.as_raw()
             {
-                moca_maa::apply_window_icon_from_exe(win32.hwnd.get());
+                let hwnd = win32.hwnd.get();
+                win32_hwnd = Some(hwnd);
+                moca_maa::apply_window_icon_from_exe(hwnd);
             }
         }
 
@@ -110,6 +117,8 @@ impl MocaApp {
             maa_version: None,
             maa_error: None,
             process_elevated: is_current_process_elevated(),
+            win32_hwnd,
+            icon_sync_remaining: if win32_hwnd.is_some() { 10 } else { 0 },
             packages: Vec::new(),
             moca_icon_texture,
             game_icons: HashMap::new(),
@@ -544,6 +553,12 @@ impl eframe::App for MocaApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.icon_sync_remaining > 0 {
+            self.icon_sync_remaining -= 1;
+            if let Some(hwnd) = self.win32_hwnd {
+                moca_maa::apply_window_icon_from_exe(hwnd);
+            }
+        }
         self.render_title_bar(ui);
         self.render_left_task_panel(ui);
         self.render_middle_inspector_panel(ui);
@@ -760,8 +775,9 @@ impl MocaApp {
                     }
 
                     if self.process_elevated {
-                        pill_badge(
+                        pill_badge_with_icon(
                             ui,
+                            Some(UiIcon::Shield),
                             "管理员",
                             self.theme.accent_hover,
                             self.theme.accent_soft_bg,
@@ -798,19 +814,18 @@ impl MocaApp {
 
                         ui.add_space(10.0);
 
-                        let gh_btn = egui::Button::new(
-                            egui::RichText::new("GitHub · github.com/limitcool/moca")
-                                .size(12.0)
-                                .strong()
-                                .color(self.theme.accent_hover),
-                        )
-                        .fill(self.theme.accent_soft_bg)
-                        .stroke(Stroke::new(1.0, self.theme.accent.gamma_multiply(0.55)))
-                        .corner_radius(CornerRadius::same(99));
-                        let gh_resp = ui
-                            .add(gh_btn)
-                            .on_hover_text("在浏览器中打开 Moca GitHub 开源仓库")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let gh_resp = self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::GitHub),
+                                "GitHub · limitcool/moca",
+                                Some(UiIcon::ExternalLink),
+                                IconButtonVariant::SoftAccent,
+                                26.0,
+                                false,
+                            )
+                            .on_hover_text("在浏览器中打开 Moca GitHub 开源仓库");
                         interactive_right_x = interactive_right_x.min(gh_resp.rect.left() - 6.0);
                         if gh_resp.clicked() {
                             open_repo_clicked = true;
@@ -895,6 +910,7 @@ impl MocaApp {
         self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                allocate_and_paint_icon(ui, UiIcon::Gamepad, 15.0, self.theme.accent_hover);
                 ui.label(
                     egui::RichText::new("游戏包")
                         .size(13.5)
@@ -902,10 +918,34 @@ impl MocaApp {
                         .color(self.theme.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("刷新").clicked() {
+                    if self
+                        .theme
+                        .icon_button(
+                            ui,
+                            Some(UiIcon::Refresh),
+                            "刷新",
+                            None,
+                            IconButtonVariant::Secondary,
+                            24.0,
+                            false,
+                        )
+                        .clicked()
+                    {
                         self.runtime.send(RuntimeCommand::ReloadGamePackages);
                     }
-                    if ui.small_button("+ 扩展").clicked() {
+                    if self
+                        .theme
+                        .icon_button(
+                            ui,
+                            Some(UiIcon::Plus),
+                            "扩展",
+                            None,
+                            IconButtonVariant::Secondary,
+                            24.0,
+                            false,
+                        )
+                        .clicked()
+                    {
                         self.push_log(
                             LogLevel::Info,
                             "将符合 interface.json 规范的游戏包放入 games/<id>/ 目录后点击「刷新」即可接入",
@@ -990,9 +1030,10 @@ impl MocaApp {
                                 .color(self.theme.text_primary),
                         );
                         if let Some(theme_name) = &self.theme.theme_name {
-                            pill_badge(
+                            pill_badge_with_icon(
                                 ui,
-                                &format!("★ 皮肤: {theme_name}"),
+                                Some(UiIcon::Sparkle),
+                                &format!("皮肤: {theme_name}"),
                                 self.theme.accent_hover,
                                 self.theme.accent_soft_bg,
                                 self.theme.accent.gamma_multiply(0.45),
@@ -1021,6 +1062,7 @@ impl MocaApp {
         self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                allocate_and_paint_icon(ui, UiIcon::Plug, 15.0, self.theme.accent_hover);
                 ui.label(
                     egui::RichText::new("设备与窗口接入")
                         .size(14.0)
@@ -1037,33 +1079,46 @@ impl MocaApp {
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("扫描设备").clicked() {
+                    if self
+                        .theme
+                        .icon_button(
+                            ui,
+                            Some(UiIcon::Scan),
+                            "扫描设备",
+                            None,
+                            IconButtonVariant::Secondary,
+                            24.0,
+                            false,
+                        )
+                        .clicked()
+                    {
                         self.runtime.send(RuntimeCommand::ScanDevices);
                     }
                 });
             });
 
             ui.add_space(4.0);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered_justified(|ui| {
-                    if self
-                        .theme
-                        .segment_button(ui, self.target_tab == TargetTab::Win32, "Win32 端游")
-                        .clicked()
-                    {
-                        self.target_tab = TargetTab::Win32;
-                    }
-                });
-                cols[1].vertical_centered_justified(|ui| {
-                    if self
-                        .theme
-                        .segment_button(ui, self.target_tab == TargetTab::Adb, "ADB 模拟器")
-                        .clicked()
-                    {
-                        self.target_tab = TargetTab::Adb;
-                    }
-                });
-            });
+            if let Some(idx) = self.theme.segmented_row(
+                ui,
+                &[
+                    SegmentedOption {
+                        label: "Win32 端游",
+                        icon: Some(UiIcon::Desktop),
+                        selected: self.target_tab == TargetTab::Win32,
+                    },
+                    SegmentedOption {
+                        label: "ADB 模拟器",
+                        icon: Some(UiIcon::Smartphone),
+                        selected: self.target_tab == TargetTab::Adb,
+                    },
+                ],
+            ) {
+                self.target_tab = if idx == 0 {
+                    TargetTab::Win32
+                } else {
+                    TargetTab::Adb
+                };
+            }
 
             ui.add_space(4.0);
             match self.target_tab {
@@ -1138,35 +1193,35 @@ impl MocaApp {
             let mut mode_changed = false;
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("执行模式:")
+                    egui::RichText::new("执行模式")
                         .size(12.5)
                         .color(self.theme.text_secondary),
                 );
-                if self
-                    .theme
-                    .segment_button(
-                        ui,
-                        self.execution_mode == ExecutionMode::Background,
-                        "后台并行",
-                    )
-                    .clicked()
-                    && self.execution_mode != ExecutionMode::Background
-                {
-                    self.execution_mode = ExecutionMode::Background;
-                    mode_changed = true;
-                }
-                if self
-                    .theme
-                    .segment_button(
-                        ui,
-                        self.execution_mode == ExecutionMode::ForegroundExclusive,
-                        "前台独占",
-                    )
-                    .clicked()
-                    && self.execution_mode != ExecutionMode::ForegroundExclusive
-                {
-                    self.execution_mode = ExecutionMode::ForegroundExclusive;
-                    mode_changed = true;
+                ui.add_space((ui.available_width() - 216.0).max(8.0));
+                if let Some(idx) = self.theme.segmented_row(
+                    ui,
+                    &[
+                        SegmentedOption {
+                            label: "后台并行",
+                            icon: Some(UiIcon::Layers),
+                            selected: self.execution_mode == ExecutionMode::Background,
+                        },
+                        SegmentedOption {
+                            label: "前台独占",
+                            icon: Some(UiIcon::Bolt),
+                            selected: self.execution_mode == ExecutionMode::ForegroundExclusive,
+                        },
+                    ],
+                ) {
+                    let next = if idx == 0 {
+                        ExecutionMode::Background
+                    } else {
+                        ExecutionMode::ForegroundExclusive
+                    };
+                    if next != self.execution_mode {
+                        self.execution_mode = next;
+                        mode_changed = true;
+                    }
                 }
             });
             if mode_changed {
@@ -1194,7 +1249,15 @@ impl MocaApp {
             if !self.connected {
                 if self
                     .theme
-                    .primary_button(ui, "连接并抓取画面", true)
+                    .icon_button(
+                        ui,
+                        Some(UiIcon::Plug),
+                        "连接并抓取画面",
+                        None,
+                        IconButtonVariant::Primary,
+                        34.0,
+                        true,
+                    )
                     .clicked()
                     && let Some(target) = self.selected_device_target()
                 {
@@ -1209,7 +1272,15 @@ impl MocaApp {
                     cols[0].vertical_centered_justified(|ui| {
                         if self
                             .theme
-                            .primary_button(ui, "截取实时画面", true)
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Monitor),
+                                "截取实时画面",
+                                None,
+                                IconButtonVariant::Primary,
+                                34.0,
+                                true,
+                            )
                             .clicked()
                         {
                             self.runtime.send(RuntimeCommand::CaptureFrame {
@@ -1218,14 +1289,19 @@ impl MocaApp {
                         }
                     });
                     cols[1].vertical_centered_justified(|ui| {
-                        let disconnect = egui::Button::new(
-                            egui::RichText::new("断开连接").color(self.theme.error),
-                        )
-                        .fill(self.theme.error_bg)
-                        .stroke(Stroke::new(1.0, self.theme.error.gamma_multiply(0.5)))
-                        .corner_radius(CornerRadius::same(self.theme.button_radius))
-                        .min_size(egui::vec2(ui.available_width(), 34.0));
-                        if ui.add(disconnect).clicked() {
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Unplug),
+                                "断开连接",
+                                None,
+                                IconButtonVariant::Danger,
+                                34.0,
+                                true,
+                            )
+                            .clicked()
+                        {
                             self.runtime.send(RuntimeCommand::Disconnect {
                                 instance_id: self.active_instance_id.clone(),
                             });
@@ -1240,6 +1316,7 @@ impl MocaApp {
         self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                allocate_and_paint_icon(ui, UiIcon::ListChecks, 15.0, self.theme.accent_hover);
                 ui.label(
                     egui::RichText::new("任务队列")
                         .size(13.5)
@@ -1250,42 +1327,46 @@ impl MocaApp {
                     let any_active =
                         self.tasks_running || self.active_triggers.values().any(|(on, _)| *on);
                     if any_active {
-                        let stop_btn = egui::Button::new(
-                            egui::RichText::new("■ 停止")
-                                .size(11.5)
-                                .strong()
-                                .color(self.theme.error),
-                        )
-                        .fill(self.theme.error_bg)
-                        .stroke(Stroke::new(1.0, self.theme.error.gamma_multiply(0.6)))
-                        .corner_radius(CornerRadius::same(self.theme.button_radius));
-                        if ui.add(stop_btn).clicked() {
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Stop),
+                                "停止",
+                                None,
+                                IconButtonVariant::Danger,
+                                25.0,
+                                false,
+                            )
+                            .clicked()
+                        {
                             self.runtime.send(RuntimeCommand::StopTasks {
                                 instance_id: self.active_instance_id.clone(),
                             });
                         }
-                    } else {
-                        let run_btn = egui::Button::new(
-                            egui::RichText::new("▶ 运行日常")
-                                .size(11.5)
-                                .strong()
-                                .color(self.theme.accent_text),
+                    } else if self
+                        .theme
+                        .icon_button(
+                            ui,
+                            Some(UiIcon::Play),
+                            "运行日常",
+                            None,
+                            IconButtonVariant::Primary,
+                            25.0,
+                            false,
                         )
-                        .fill(self.theme.accent)
-                        .corner_radius(CornerRadius::same(self.theme.button_radius));
-                        if ui.add(run_btn).clicked()
-                            && let Some(pkg) = self.packages.get(self.selected_game_idx).cloned()
-                        {
-                            let mut batch = Vec::new();
-                            for tid in &self.selected_tasks {
-                                if let Some(t) = pkg.manifest.task.get(tid)
-                                    && t.kind == TaskKind::Batch
-                                {
-                                    batch.push(t.clone());
-                                }
+                        .clicked()
+                        && let Some(pkg) = self.packages.get(self.selected_game_idx).cloned()
+                    {
+                        let mut batch = Vec::new();
+                        for tid in &self.selected_tasks {
+                            if let Some(t) = pkg.manifest.task.get(tid)
+                                && t.kind == TaskKind::Batch
+                            {
+                                batch.push(t.clone());
                             }
-                            self.dispatch_tasks(batch);
                         }
+                        self.dispatch_tasks(batch);
                     }
                 });
             });
@@ -1314,12 +1395,15 @@ impl MocaApp {
     fn render_task_inspector_card(&mut self, ui: &mut egui::Ui) {
         self.theme.card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new("任务配置详情")
-                    .size(13.5)
-                    .strong()
-                    .color(self.theme.text_primary),
-            );
+            ui.horizontal(|ui| {
+                allocate_and_paint_icon(ui, UiIcon::Sliders, 15.0, self.theme.accent_hover);
+                ui.label(
+                    egui::RichText::new("任务配置详情")
+                        .size(13.5)
+                        .strong()
+                        .color(self.theme.text_primary),
+                );
+            });
             ui.add_space(4.0);
 
             if let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() {
@@ -1359,6 +1443,7 @@ impl MocaApp {
             .size_range(95.0..=320.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    allocate_and_paint_icon(ui, UiIcon::Terminal, 14.5, self.theme.accent_hover);
                     ui.label(
                         egui::RichText::new("运行日志控制台")
                             .size(13.0)
@@ -1373,7 +1458,19 @@ impl MocaApp {
                         self.theme.border,
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("清空").clicked() {
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Trash),
+                                "清空",
+                                None,
+                                IconButtonVariant::Secondary,
+                                24.0,
+                                false,
+                            )
+                            .clicked()
+                        {
                             self.logs.clear();
                         }
                     });
@@ -1424,6 +1521,7 @@ impl MocaApp {
             .frame(center_frame)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    allocate_and_paint_icon(ui, UiIcon::Monitor, 16.0, self.theme.accent_hover);
                     ui.label(
                         egui::RichText::new("实时画面 · CV 识别调试画布")
                             .size(15.0)
@@ -1469,7 +1567,12 @@ impl MocaApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self
                             .theme
-                            .segment_button(ui, self.roi_tool.enabled, "ROI 采图框选")
+                            .chip_toggle_button(
+                                ui,
+                                Some(UiIcon::Crop),
+                                self.roi_tool.enabled,
+                                "ROI 采图框选",
+                            )
                             .clicked()
                         {
                             self.roi_tool.enabled = !self.roi_tool.enabled;
@@ -1621,20 +1724,34 @@ impl MocaApp {
                                             .color(self.theme.text_secondary),
                                         );
                                         ui.add_space(12.0);
-                                        if self.theme.primary_button(ui, "重新扫描设备与窗口", false).clicked()
+                                        if self
+                                            .theme
+                                            .icon_button(
+                                                ui,
+                                                Some(UiIcon::Scan),
+                                                "重新扫描设备与窗口",
+                                                None,
+                                                IconButtonVariant::Primary,
+                                                32.0,
+                                                false,
+                                            )
+                                            .clicked()
                                         {
                                             self.runtime.send(RuntimeCommand::ScanDevices);
                                         }
                                         ui.add_space(10.0);
-                                        if ui
-                                            .add(egui::Link::new(
-                                                egui::RichText::new(
-                                                    "开源仓库: https://github.com/limitcool/moca",
-                                                )
-                                                .size(12.5)
-                                                .color(self.theme.accent_hover),
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        if self
+                                            .theme
+                                            .icon_button(
+                                                ui,
+                                                Some(UiIcon::GitHub),
+                                                "开源仓库 · github.com/limitcool/moca",
+                                                Some(UiIcon::ExternalLink),
+                                                IconButtonVariant::SoftAccent,
+                                                28.0,
+                                                false,
+                                            )
+                                            .on_hover_text("点击在浏览器中打开 Moca GitHub 仓库")
                                             .clicked()
                                         {
                                             self.open_repo_url(ui.ctx());

@@ -4,6 +4,23 @@ use egui::{
 };
 use moca_protocol::GameTheme;
 
+use crate::icons::{UiIcon, paint_icon};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconButtonVariant {
+    Primary,
+    Secondary,
+    SoftAccent,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SegmentedOption<'a> {
+    pub label: &'a str,
+    pub icon: Option<UiIcon>,
+    pub selected: bool,
+}
+
 /// Dynamic theme tokens enabling per-game ("one game, one skin") styling.
 #[derive(Debug, Clone)]
 pub struct ThemeTokens {
@@ -48,36 +65,36 @@ impl Default for ThemeTokens {
 }
 
 impl ThemeTokens {
-    /// Moca default dark slate & electric-blue theme.
+    /// Moca default Fluent slate & clear sky-blue theme.
     pub fn obsidian() -> Self {
         Self {
             theme_name: None,
-            bg_app: Color32::from_rgb(15, 17, 23),
-            bg_sidebar: Color32::from_rgb(20, 23, 31),
-            bg_header: Color32::from_rgb(17, 20, 27),
-            bg_card: Color32::from_rgb(27, 31, 42),
-            bg_subcard: Color32::from_rgb(22, 26, 35),
-            bg_input: Color32::from_rgb(13, 15, 20),
-            bg_console: Color32::from_rgb(11, 13, 18),
+            bg_app: Color32::from_rgb(17, 21, 32),
+            bg_sidebar: Color32::from_rgb(22, 27, 41),
+            bg_header: Color32::from_rgb(21, 26, 40),
+            bg_card: Color32::from_rgb(29, 35, 52),
+            bg_subcard: Color32::from_rgb(24, 30, 45),
+            bg_input: Color32::from_rgb(18, 22, 34),
+            bg_console: Color32::from_rgb(14, 18, 27),
 
-            border: Color32::from_rgb(43, 49, 64),
-            border_strong: Color32::from_rgb(62, 71, 92),
+            border: Color32::from_rgb(41, 50, 72),
+            border_strong: Color32::from_rgb(76, 126, 210),
 
-            accent: Color32::from_rgb(88, 128, 255),
-            accent_hover: Color32::from_rgb(110, 146, 255),
-            accent_soft_bg: Color32::from_rgba_premultiplied(32, 47, 82, 255),
+            accent: Color32::from_rgb(59, 130, 246),
+            accent_hover: Color32::from_rgb(124, 192, 255),
+            accent_soft_bg: Color32::from_rgb(29, 48, 82),
             accent_text: Color32::WHITE,
 
             success: Color32::from_rgb(52, 211, 153),
-            success_bg: Color32::from_rgb(18, 46, 38),
+            success_bg: Color32::from_rgb(19, 49, 41),
             warn: Color32::from_rgb(251, 191, 36),
             warn_bg: Color32::from_rgb(51, 39, 17),
             error: Color32::from_rgb(248, 113, 113),
             error_bg: Color32::from_rgb(56, 23, 27),
 
-            text_primary: Color32::from_rgb(236, 240, 248),
-            text_secondary: Color32::from_rgb(165, 174, 194),
-            text_muted: Color32::from_rgb(110, 119, 139),
+            text_primary: Color32::from_rgb(238, 243, 252),
+            text_secondary: Color32::from_rgb(169, 183, 208),
+            text_muted: Color32::from_rgb(110, 125, 153),
 
             card_radius: 10,
             subcard_radius: 8,
@@ -86,41 +103,44 @@ impl ThemeTokens {
         }
     }
 
-    /// *Azur Promilia* inspired starlight astrolabe & frosted-capsule skin.
+    /// *Azur Promilia* inspired Fluent sky-blue theme with delicate celestial canvas rings.
     pub fn azur_star() -> Self {
         Self {
-            theme_name: Some("星原星盘".into()),
-            bg_app: Color32::from_rgb(17, 21, 32),
-            bg_sidebar: Color32::from_rgb(23, 28, 43),
-            bg_header: Color32::from_rgb(20, 25, 38),
-            bg_card: Color32::from_rgb(30, 36, 54),
-            bg_subcard: Color32::from_rgb(25, 30, 45),
-            bg_input: Color32::from_rgb(15, 18, 28),
-            bg_console: Color32::from_rgb(13, 16, 24),
-
-            border: Color32::from_rgb(50, 59, 82),
-            border_strong: Color32::from_rgb(112, 92, 56),
-
-            accent: Color32::from_rgb(218, 165, 75),
-            accent_hover: Color32::from_rgb(244, 200, 110),
-            accent_soft_bg: Color32::from_rgb(52, 41, 23),
-            accent_text: Color32::from_rgb(26, 19, 7),
-
-            success: Color32::from_rgb(74, 222, 168),
-            success_bg: Color32::from_rgb(20, 49, 42),
-            warn: Color32::from_rgb(248, 196, 84),
-            warn_bg: Color32::from_rgb(55, 42, 18),
-            error: Color32::from_rgb(248, 113, 113),
-            error_bg: Color32::from_rgb(58, 24, 29),
-
-            text_primary: Color32::from_rgb(242, 240, 234),
-            text_secondary: Color32::from_rgb(178, 182, 196),
-            text_muted: Color32::from_rgb(118, 126, 148),
-
-            card_radius: 13,
-            subcard_radius: 10,
-            button_radius: 99,
+            theme_name: Some("星原晴空蓝".into()),
             starlight_decor: true,
+            ..Self::obsidian()
+        }
+    }
+
+    /// Minimal Linear / Raycast inspired cold neutral slate & electric-blue theme.
+    pub fn linear_slate() -> Self {
+        Self {
+            theme_name: Some("极简冷蓝".into()),
+            bg_app: Color32::from_rgb(12, 13, 16),
+            bg_sidebar: Color32::from_rgb(17, 19, 24),
+            bg_header: Color32::from_rgb(16, 18, 23),
+            bg_card: Color32::from_rgb(22, 25, 34),
+            bg_subcard: Color32::from_rgb(18, 20, 28),
+            bg_input: Color32::from_rgb(13, 15, 20),
+            bg_console: Color32::from_rgb(9, 10, 13),
+
+            border: Color32::from_rgb(35, 39, 52),
+            border_strong: Color32::from_rgb(79, 124, 255),
+
+            accent: Color32::from_rgb(79, 124, 255),
+            accent_hover: Color32::from_rgb(123, 160, 255),
+            accent_soft_bg: Color32::from_rgb(26, 34, 56),
+            accent_text: Color32::WHITE,
+
+            text_primary: Color32::from_rgb(241, 244, 250),
+            text_secondary: Color32::from_rgb(157, 166, 186),
+            text_muted: Color32::from_rgb(99, 107, 126),
+
+            card_radius: 8,
+            subcard_radius: 6,
+            button_radius: 6,
+            starlight_decor: false,
+            ..Self::obsidian()
         }
     }
 
@@ -131,6 +151,7 @@ impl ThemeTokens {
 
         let mut base = match cfg.preset.as_deref().map(str::trim) {
             Some("azur_star") | Some("azur") => Self::azur_star(),
+            Some("linear_slate") | Some("linear") => Self::linear_slate(),
             _ => Self::obsidian(),
         };
 
@@ -259,7 +280,7 @@ impl ThemeTokens {
     pub fn card_frame(&self) -> egui::Frame {
         egui::Frame::new()
             .fill(self.bg_card)
-            .stroke(Stroke::new(1.0, self.border))
+            .stroke(Stroke::new(1.0, self.border.gamma_multiply(0.85)))
             .corner_radius(CornerRadius::same(self.card_radius))
             .inner_margin(Margin::symmetric(12, 10))
     }
@@ -268,64 +289,336 @@ impl ThemeTokens {
     pub fn sub_card_frame(&self) -> egui::Frame {
         egui::Frame::new()
             .fill(self.bg_subcard)
-            .stroke(Stroke::new(1.0, self.border))
+            .stroke(Stroke::new(1.0, self.border.gamma_multiply(0.7)))
             .corner_radius(CornerRadius::same(self.subcard_radius))
             .inner_margin(Margin::symmetric(10, 7))
     }
 
-    pub fn primary_button(
+    /// Paint a grid or row of unified HIG-style segmented cells inside a recessed track.
+    fn paint_segmented_track(
         &self,
         ui: &mut egui::Ui,
-        text: &str,
-        full_width: bool,
-    ) -> egui::Response {
-        let min_size = if full_width {
-            Vec2::new(ui.available_width(), 34.0)
-        } else {
-            Vec2::new(0.0, 32.0)
-        };
-        let btn = egui::Button::new(
-            egui::RichText::new(text)
-                .size(13.5)
-                .strong()
-                .color(self.accent_text),
-        )
-        .fill(self.accent)
-        .stroke(Stroke::new(1.0, self.accent_hover))
-        .corner_radius(CornerRadius::same(self.button_radius))
-        .min_size(min_size);
-        if full_width {
-            ui.vertical_centered_justified(|ui| ui.add(btn)).inner
-        } else {
-            ui.add(btn)
+        track_width: f32,
+        cols: usize,
+        cell_height: f32,
+        options: &[SegmentedOption<'_>],
+    ) -> Option<usize> {
+        if options.is_empty() || cols == 0 {
+            return None;
         }
+        let rows = options.len().div_ceil(cols);
+        let pad = 3.0;
+        let gap = 3.0;
+        let total_height =
+            pad * 2.0 + (rows as f32) * cell_height + ((rows.saturating_sub(1)) as f32) * gap;
+        let track_width = track_width.max(80.0);
+
+        let (track_rect, _) =
+            ui.allocate_exact_size(Vec2::new(track_width, total_height), Sense::hover());
+        let track_radius = CornerRadius::same(self.subcard_radius);
+        ui.painter()
+            .rect_filled(track_rect, track_radius, self.bg_input);
+        ui.painter().rect_stroke(
+            track_rect,
+            track_radius,
+            Stroke::new(1.0, self.border.gamma_multiply(0.85)),
+            egui::StrokeKind::Inside,
+        );
+
+        let inner_w = (track_rect.width() - pad * 2.0 - gap * ((cols - 1) as f32)).max(16.0);
+        let cell_w = inner_w / (cols as f32);
+        let cell_radius = CornerRadius::same(self.button_radius.min(6));
+        let mut clicked = None;
+
+        for (idx, opt) in options.iter().enumerate() {
+            let row = idx / cols;
+            let col = idx % cols;
+            let x = track_rect.left() + pad + (col as f32) * (cell_w + gap);
+            let y = track_rect.top() + pad + (row as f32) * (cell_height + gap);
+            let cell_rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(cell_w, cell_height));
+
+            let id = ui.make_persistent_id(("seg_cell", row, col, opt.label));
+            let resp = ui
+                .interact(cell_rect, id, Sense::click())
+                .on_hover_cursor(CursorIcon::PointingHand);
+            if resp.clicked() {
+                clicked = Some(idx);
+            }
+
+            if ui.is_rect_visible(cell_rect) {
+                let anim = ui.ctx().animate_bool_responsive(id, opt.selected);
+                let hover_bg = if resp.hovered() && !opt.selected {
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 14)
+                } else {
+                    Color32::TRANSPARENT
+                };
+                let fill = hover_bg.lerp_to_gamma(self.accent, anim);
+                if fill != Color32::TRANSPARENT {
+                    ui.painter().rect_filled(cell_rect, cell_radius, fill);
+                }
+                if anim > 0.05 {
+                    ui.painter().rect_stroke(
+                        cell_rect,
+                        cell_radius,
+                        Stroke::new(1.0, self.accent_hover.gamma_multiply(0.55 * anim)),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                let text_col = self.text_secondary.lerp_to_gamma(self.accent_text, anim);
+                let font = FontId::proportional(12.2);
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(opt.label.to_string(), font.clone(), text_col);
+                let text_w = galley.size().x;
+                if let Some(icon) = opt.icon {
+                    let icon_sz = 13.0;
+                    let icon_gap = 5.0;
+                    let total_w = icon_sz + icon_gap + text_w;
+                    let start_x = cell_rect.center().x - total_w * 0.5;
+                    let icon_rect = Rect::from_center_size(
+                        Pos2::new(start_x + icon_sz * 0.5, cell_rect.center().y),
+                        Vec2::splat(icon_sz),
+                    );
+                    paint_icon(ui.painter(), icon_rect, icon, text_col);
+                    ui.painter().galley(
+                        Pos2::new(
+                            start_x + icon_sz + icon_gap,
+                            cell_rect.center().y - galley.size().y * 0.5,
+                        ),
+                        galley,
+                        text_col,
+                    );
+                } else {
+                    ui.painter().galley(
+                        Pos2::new(
+                            cell_rect.center().x - text_w * 0.5,
+                            cell_rect.center().y - galley.size().y * 0.5,
+                        ),
+                        galley,
+                        text_col,
+                    );
+                }
+            }
+        }
+
+        clicked
     }
 
-    pub fn segment_button(&self, ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
-        let (fill, stroke, text_color) = if selected {
-            (
-                self.accent_soft_bg,
-                Stroke::new(1.0, self.accent),
-                self.text_primary,
-            )
-        } else {
-            (
-                self.bg_input,
+    /// Unified button with crisp vector leading/trailing icons.
+    #[allow(clippy::too_many_arguments)]
+    pub fn icon_button(
+        &self,
+        ui: &mut egui::Ui,
+        leading: Option<UiIcon>,
+        text: &str,
+        trailing: Option<UiIcon>,
+        variant: IconButtonVariant,
+        height: f32,
+        full_width: bool,
+    ) -> egui::Response {
+        let (base_fill, hover_fill, stroke, text_color) = match variant {
+            IconButtonVariant::Primary => (
+                self.accent,
+                self.accent_hover,
+                Stroke::new(1.0, self.accent_hover.gamma_multiply(0.65)),
+                self.accent_text,
+            ),
+            IconButtonVariant::Secondary => (
+                self.bg_subcard,
+                Color32::from_rgb(38, 46, 66),
                 Stroke::new(1.0, self.border),
-                self.text_secondary,
-            )
+                self.text_primary,
+            ),
+            IconButtonVariant::SoftAccent => (
+                self.accent_soft_bg,
+                self.accent.gamma_multiply(0.32),
+                Stroke::new(1.0, self.accent.gamma_multiply(0.48)),
+                self.accent_hover,
+            ),
+            IconButtonVariant::Danger => (
+                self.error_bg,
+                self.error.gamma_multiply(0.28),
+                Stroke::new(1.0, self.error.gamma_multiply(0.55)),
+                self.error,
+            ),
         };
-        let radius = if self.button_radius >= 90 {
-            99
+
+        let font_size = if height >= 32.0 { 13.0 } else { 12.0 };
+        let font = FontId::proportional(font_size);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text.to_string(), font, text_color);
+        let icon_sz = if height >= 32.0 { 14.5 } else { 13.0 };
+        let gap = 6.0;
+        let pad_x = if height >= 32.0 { 14.0 } else { 10.0 };
+
+        let content_w = galley.size().x
+            + if leading.is_some() {
+                icon_sz + gap
+            } else {
+                0.0
+            }
+            + if trailing.is_some() {
+                icon_sz + gap
+            } else {
+                0.0
+            };
+        let desired_w = if full_width {
+            ui.available_width().max(content_w + pad_x * 2.0)
         } else {
-            self.button_radius.min(8)
+            content_w + pad_x * 2.0
         };
-        let btn = egui::Button::new(egui::RichText::new(text).size(12.5).color(text_color))
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(CornerRadius::same(radius))
-            .min_size(Vec2::new(0.0, 28.0));
-        ui.add(btn)
+
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(desired_w, height), Sense::click());
+        let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+        if ui.is_rect_visible(rect) {
+            let fill = if resp.hovered() {
+                hover_fill
+            } else {
+                base_fill
+            };
+            let radius = CornerRadius::same(self.button_radius);
+            ui.painter().rect_filled(rect, radius, fill);
+            ui.painter()
+                .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+
+            let mut x = rect.center().x - content_w * 0.5;
+            let cy = rect.center().y;
+            if let Some(icon) = leading {
+                let ir =
+                    Rect::from_center_size(Pos2::new(x + icon_sz * 0.5, cy), Vec2::splat(icon_sz));
+                paint_icon(ui.painter(), ir, icon, text_color);
+                x += icon_sz + gap;
+            }
+            ui.painter().galley(
+                Pos2::new(x, cy - galley.size().y * 0.5),
+                galley.clone(),
+                text_color,
+            );
+            x += galley.size().x;
+            if let Some(icon) = trailing {
+                x += gap;
+                let ir =
+                    Rect::from_center_size(Pos2::new(x + icon_sz * 0.5, cy), Vec2::splat(icon_sz));
+                paint_icon(ui.painter(), ir, icon, text_color);
+            }
+        }
+        resp
+    }
+
+    /// Compact Fluent-style standalone toggle button (e.g. "ROI 采图框选").
+    pub fn chip_toggle_button(
+        &self,
+        ui: &mut egui::Ui,
+        icon: Option<UiIcon>,
+        active: bool,
+        text: &str,
+    ) -> egui::Response {
+        let variant = if active {
+            IconButtonVariant::SoftAccent
+        } else {
+            IconButtonVariant::Secondary
+        };
+        self.icon_button(ui, icon, text, None, variant, 26.0, false)
+    }
+
+    /// Render a single-row HIG segmented control inside a dark recessed track.
+    pub fn segmented_row(
+        &self,
+        ui: &mut egui::Ui,
+        options: &[SegmentedOption<'_>],
+    ) -> Option<usize> {
+        self.paint_segmented_track(ui, ui.available_width(), options.len(), 26.0, options)
+    }
+
+    /// Render a vertical Fluent/HIG inset grouped radio list for longer select labels.
+    pub fn radio_list_group(
+        &self,
+        ui: &mut egui::Ui,
+        options: &[(&str, Option<&str>, bool)],
+    ) -> Option<usize> {
+        if options.is_empty() {
+            return None;
+        }
+        let mut clicked = None;
+        egui::Frame::new()
+            .fill(self.bg_input)
+            .stroke(Stroke::new(1.0, self.border.gamma_multiply(0.85)))
+            .corner_radius(CornerRadius::same(self.subcard_radius))
+            .inner_margin(Margin::symmetric(2, 2))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (idx, (label, desc, selected)) in options.iter().enumerate() {
+                    if idx > 0 {
+                        let r = ui.available_rect_before_wrap();
+                        ui.painter().line_segment(
+                            [
+                                Pos2::new(r.left() + 8.0, r.top()),
+                                Pos2::new(r.right() - 8.0, r.top()),
+                            ],
+                            Stroke::new(1.0, self.border.gamma_multiply(0.45)),
+                        );
+                    }
+                    let row_h = if desc.is_some() { 40.0 } else { 30.0 };
+                    let (rect, resp) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), row_h),
+                        Sense::click(),
+                    );
+                    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+                    if resp.clicked() {
+                        clicked = Some(idx);
+                    }
+                    if ui.is_rect_visible(rect) {
+                        let anim = ui.ctx().animate_bool_responsive(resp.id, *selected);
+                        let row_bg = if *selected {
+                            self.accent_soft_bg.gamma_multiply(0.7)
+                        } else if resp.hovered() {
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        if row_bg != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(
+                                rect,
+                                CornerRadius::same(self.button_radius.min(6)),
+                                row_bg,
+                            );
+                        }
+                        let radio_center = Pos2::new(rect.left() + 16.0, rect.center().y);
+                        let ring_col = self.text_muted.lerp_to_gamma(self.accent, anim);
+                        ui.painter()
+                            .circle_stroke(radio_center, 6.5, Stroke::new(1.5, ring_col));
+                        if anim > 0.05 {
+                            ui.painter()
+                                .circle_filled(radio_center, 3.2 * anim, self.accent_hover);
+                        }
+                        let title_col = self.text_secondary.lerp_to_gamma(self.text_primary, anim);
+                        let title_y = if desc.is_some() {
+                            rect.top() + 6.0
+                        } else {
+                            rect.center().y - 7.5
+                        };
+                        ui.painter().text(
+                            Pos2::new(rect.left() + 30.0, title_y),
+                            egui::Align2::LEFT_TOP,
+                            *label,
+                            FontId::proportional(12.5),
+                            title_col,
+                        );
+                        if let Some(d) = desc {
+                            ui.painter().text(
+                                Pos2::new(rect.left() + 30.0, rect.top() + 22.0),
+                                egui::Align2::LEFT_TOP,
+                                *d,
+                                FontId::proportional(11.0),
+                                self.text_muted,
+                            );
+                        }
+                    }
+                }
+            });
+        clicked
     }
 
     /// Animated pill toggle switch.
@@ -457,8 +750,8 @@ impl ThemeTokens {
         if !self.starlight_decor || rect.width() < 160.0 || rect.height() < 160.0 {
             return;
         }
-        let ring_stroke = Stroke::new(1.0, self.accent.gamma_multiply(0.08));
-        let outer_stroke = Stroke::new(1.0, self.border.gamma_multiply(0.42));
+        let ring_stroke = Stroke::new(1.0, self.accent.gamma_multiply(0.07));
+        let outer_stroke = Stroke::new(1.0, self.border.gamma_multiply(0.30));
         let center = rect.center();
         let max_r = (rect.width().min(rect.height()) * 0.44).max(90.0);
 
@@ -466,25 +759,18 @@ impl ThemeTokens {
         painter.circle_stroke(center, max_r * 0.72, ring_stroke);
         painter.circle_stroke(center, max_r * 0.46, outer_stroke);
 
-        // Subtle tilted hairline guides & sparkle accents
-        let spark = self.accent_hover.gamma_multiply(0.28);
+        let spark = self.accent_hover.gamma_multiply(0.16);
         paint_four_point_star(
             painter,
             Pos2::new(rect.left() + 34.0, rect.top() + 30.0),
-            6.5,
+            5.5,
             spark,
         );
         paint_four_point_star(
             painter,
             Pos2::new(rect.right() - 36.0, rect.bottom() - 32.0),
-            8.0,
+            6.5,
             spark,
-        );
-        paint_four_point_star(
-            painter,
-            Pos2::new(center.x + max_r * 0.72, center.y - max_r * 0.72 * 0.35),
-            4.5,
-            self.accent.gamma_multiply(0.24),
         );
     }
 }
@@ -504,15 +790,32 @@ fn paint_four_point_star(painter: &egui::Painter, center: Pos2, radius: f32, col
     painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
 }
 
-pub fn pill_badge(ui: &mut egui::Ui, text: &str, fg: Color32, bg: Color32, border: Color32) {
+pub fn pill_badge_with_icon(
+    ui: &mut egui::Ui,
+    icon: Option<UiIcon>,
+    text: &str,
+    fg: Color32,
+    bg: Color32,
+    border: Color32,
+) {
     egui::Frame::new()
         .fill(bg)
         .stroke(Stroke::new(1.0, border))
         .corner_radius(CornerRadius::same(99))
         .inner_margin(Margin::symmetric(8, 2))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(11.5).color(fg));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if let Some(ic) = icon {
+                    crate::icons::allocate_and_paint_icon(ui, ic, 11.5, fg);
+                }
+                ui.label(egui::RichText::new(text).size(11.5).color(fg));
+            });
         });
+}
+
+pub fn pill_badge(ui: &mut egui::Ui, text: &str, fg: Color32, bg: Color32, border: Color32) {
+    pill_badge_with_icon(ui, None, text, fg, bg, border);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -649,6 +952,6 @@ mod tests {
         assert_eq!(tokens.accent, Color32::from_rgb(0x11, 0x22, 0x33));
         assert_eq!(tokens.card_radius, 16);
         assert!(tokens.starlight_decor);
-        assert_eq!(tokens.button_radius, 99);
+        assert_eq!(tokens.button_radius, 7);
     }
 }
