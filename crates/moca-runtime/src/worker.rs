@@ -279,6 +279,14 @@ impl RuntimeHandle {
                                                 "实例 [{instance_id}] 已连接 (分辨率: {res_text}, 模式: {mode:?})"
                                             ),
                                         );
+                                        if mode == ExecutionMode::Background {
+                                            emit_log(
+                                                &tx,
+                                                rp.as_deref(),
+                                                LogLevel::Info,
+                                                "提示：Win32 后台并行采用 AnchoredTouch，请保持游戏窗口未最小化且目标按钮区域不被置顶窗口或任务栏遮挡；如遇点击报错可切换「前台独占」".into(),
+                                            );
+                                        }
                                         emit(
                                             &tx,
                                             rp.as_deref(),

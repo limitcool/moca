@@ -23,6 +23,8 @@ use crate::theme::{
     handle_borderless_resize, pill_badge, primary_button, segment_button, window_caption_button,
 };
 
+const GITHUB_REPO_URL: &str = "https://github.com/limitcool/moca";
+
 fn profiles_dir() -> PathBuf {
     resolve_workspace_subdir("profiles")
 }
@@ -609,6 +611,25 @@ impl MocaApp {
                         }
                         if window_caption_button(ui, WindowCaptionKind::Minimize).clicked() {
                             ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+                        }
+
+                        ui.add_space(10.0);
+
+                        let gh_btn = egui::Button::new(
+                            egui::RichText::new("GitHub · github.com/limitcool/moca")
+                                .size(12.0)
+                                .strong()
+                                .color(Palette::ACCENT_HOVER),
+                        )
+                        .fill(Palette::ACCENT_SOFT_BG)
+                        .stroke(Stroke::new(1.0, Palette::ACCENT.gamma_multiply(0.55)))
+                        .corner_radius(CornerRadius::same(99));
+                        if ui
+                            .add(gh_btn)
+                            .on_hover_text("在浏览器中打开 Moca GitHub 开源仓库")
+                            .clicked()
+                        {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(GITHUB_REPO_URL));
                         }
                     });
                 });
@@ -1364,13 +1385,13 @@ impl MocaApp {
                         );
                     } else {
                         let avail = ui.available_size();
-                        let card_w = 400.0_f32.min(avail.x - 24.0).max(240.0);
-                        let top_pad = ((avail.y - 190.0) * 0.5).max(16.0);
+                        let card_w = 420.0_f32.min(avail.x - 24.0).max(240.0);
+                        let top_pad = ((avail.y - 220.0) * 0.5).max(16.0);
                         ui.add_space(top_pad);
                         ui.horizontal(|ui| {
                             let side_pad = ((avail.x - card_w) * 0.5).max(8.0);
                             ui.add_space(side_pad);
-                            ui.allocate_ui(egui::vec2(card_w, 190.0), |ui| {
+                            ui.allocate_ui(egui::vec2(card_w, 220.0), |ui| {
                                 card_frame().show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.vertical_centered(|ui| {
@@ -1388,11 +1409,20 @@ impl MocaApp {
                                             .size(13.0)
                                             .color(Palette::TEXT_SECONDARY),
                                         );
-                                        ui.add_space(14.0);
+                                        ui.add_space(12.0);
                                         if primary_button(ui, "重新扫描设备与窗口", false).clicked()
                                         {
                                             self.runtime.send(RuntimeCommand::ScanDevices);
                                         }
+                                        ui.add_space(10.0);
+                                        ui.hyperlink_to(
+                                            egui::RichText::new(
+                                                "开源仓库: https://github.com/limitcool/moca",
+                                            )
+                                            .size(12.5)
+                                            .color(Palette::ACCENT_HOVER),
+                                            GITHUB_REPO_URL,
+                                        );
                                     });
                                 });
                             });

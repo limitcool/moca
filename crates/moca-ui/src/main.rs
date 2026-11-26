@@ -20,7 +20,20 @@ fn load_app_icon() -> Option<Arc<egui::IconData>> {
     }))
 }
 
+fn should_skip_auto_elevation() -> bool {
+    std::env::args_os().any(|a| a == "--no-elevate")
+        || std::env::var_os("MOCA_NO_ELEVATE").is_some()
+        || std::env::var_os("CI").is_some()
+}
+
 fn main() -> eframe::Result {
+    if !should_skip_auto_elevation()
+        && !moca_maa::is_current_process_elevated()
+        && moca_maa::relaunch_as_admin()
+    {
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),

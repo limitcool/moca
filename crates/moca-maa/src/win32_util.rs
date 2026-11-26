@@ -15,11 +15,11 @@ mod imp {
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
     };
-    use windows_sys::Win32::UI::Shell::ExtractIconExW;
+    use windows_sys::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, GetClientRect, GetIconInfo,
         GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2, ICONINFO,
-        SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETICON,
+        SMTO_ABORTIFHUNG, SW_SHOWNORMAL, SendMessageTimeoutW, WM_GETICON,
     };
 
     pub fn is_current_process_elevated() -> bool {
@@ -32,6 +32,51 @@ mod imp {
             CloseHandle(token);
             result.unwrap_or(false)
         }
+    }
+
+    /// Relaunch the current executable with Administrator privileges via UAC (`ShellExecuteW("runas")`).
+    ///
+    /// Returns `true` if the elevated child process was successfully started.
+    pub fn relaunch_as_admin() -> bool {
+        use std::os::windows::ffi::OsStrExt;
+
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let to_wide = |s: &std::ffi::OsStr| -> Vec<u16> {
+            s.encode_wide().chain(std::iter::once(0)).collect()
+        };
+
+        let op: Vec<u16> = "runas\0".encode_utf16().collect();
+        let file = to_wide(exe.as_os_str());
+
+        let args_joined = std::env::args_os()
+            .skip(1)
+            .map(|arg| {
+                let s = arg.to_string_lossy();
+                if s.contains(' ') || s.is_empty() {
+                    format!("\"{}\"", s.replace('"', "\\\""))
+                } else {
+                    s.into_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let params = (!args_joined.is_empty()).then(|| to_wide(std::ffi::OsStr::new(&args_joined)));
+
+        let cwd = std::env::current_dir().ok().map(|p| to_wide(p.as_os_str()));
+
+        let res = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                op.as_ptr(),
+                file.as_ptr(),
+                params.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+                cwd.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+                SW_SHOWNORMAL,
+            )
+        };
+        (res as usize) > 32
     }
 
     pub fn is_window_process_elevated(hwnd: isize) -> Option<bool> {
@@ -337,6 +382,10 @@ mod imp {
         false
     }
 
+    pub fn relaunch_as_admin() -> bool {
+        false
+    }
+
     pub fn is_window_process_elevated(_hwnd: isize) -> Option<bool> {
         None
     }
@@ -352,4 +401,5 @@ mod imp {
 
 pub use imp::{
     get_client_size, get_window_icon_rgba, is_current_process_elevated, is_window_process_elevated,
+    relaunch_as_admin,
 };
