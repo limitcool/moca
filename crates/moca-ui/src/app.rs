@@ -6,7 +6,10 @@ use egui::{
     ViewportCommand,
 };
 use image::RgbaImage;
-use moca_maa::{DiscoveredAdb, DiscoveredWin32, is_current_process_elevated};
+use moca_maa::{
+    DiscoveredAdb, DiscoveredWin32, GlobalHotkeyAction, GlobalHotkeyListener,
+    is_current_process_elevated, toggle_window_foreground,
+};
 use moca_protocol::{
     ControllerKind, DeviceTarget, ExecutionMode, ResolvedTask, SavedGameProfile, TaskDecl, TaskKind,
 };
@@ -44,6 +47,7 @@ struct LogEntry {
 
 pub struct MocaApp {
     runtime: RuntimeHandle,
+    hotkeys: GlobalHotkeyListener,
     maa_version: Option<String>,
     maa_error: Option<String>,
     process_elevated: bool,
@@ -110,10 +114,57 @@ impl MocaApp {
         runtime.send(RuntimeCommand::Initialize);
         runtime.send(RuntimeCommand::ReloadGamePackages);
 
+        let rt_sender = runtime.sender();
+        let ctx_hk = cc.egui_ctx.clone();
+        let hwnd_opt = win32_hwnd;
+        let default_instance = "default-session".to_string();
+        let hotkeys = GlobalHotkeyListener::start(move |action| {
+            match action {
+                GlobalHotkeyAction::EmergencyStop => {
+                    rt_sender.send(RuntimeCommand::StopTasks {
+                        instance_id: default_instance.clone(),
+                    });
+                }
+                GlobalHotkeyAction::ToggleWindow => {
+                    if let Some(hwnd) = hwnd_opt {
+                        toggle_window_foreground(hwnd);
+                    }
+                }
+                GlobalHotkeyAction::ToggleTriggers => {}
+            }
+            ctx_hk.request_repaint();
+        });
+
+        let mut logs = vec![LogEntry {
+            time: format_local_hms(),
+            level: LogLevel::Info,
+            message: "Moca 底座已启动，正在初始化 MaaFramework 与游戏包...".into(),
+        }];
+        let failed = hotkeys.failed_keys();
+        if failed.is_empty() {
+            logs.push(LogEntry {
+                time: format_local_hms(),
+                level: LogLevel::Info,
+                message:
+                    "全局热键已就绪: F8 开关辅助 · F9 急停 · F10 显隐窗口（窗口内 F5 截图/刷新）"
+                        .into(),
+            });
+        } else {
+            logs.push(LogEntry {
+                time: format_local_hms(),
+                level: LogLevel::Warn,
+                message: format!(
+                    "部分全局热键已被其他软件占用 ({})，其余快捷键仍可用",
+                    failed.join(", ")
+                ),
+            });
+        }
+
         let moca_icon_texture = load_embedded_moca_icon(&cc.egui_ctx);
 
         Self {
             runtime,
+            hotkeys,
             maa_version: None,
             maa_error: None,
             process_elevated: is_current_process_elevated(),
@@ -146,11 +197,7 @@ impl MocaApp {
             preview_texture: None,
             preview_size: None,
             roi_tool: RoiToolState::new(),
-            logs: vec![LogEntry {
-                time: format_local_hms(),
-                level: LogLevel::Info,
-                message: "Moca 底座已启动，正在初始化 MaaFramework 与游戏包...".into(),
-            }],
+            logs,
         }
     }
 
@@ -340,15 +387,25 @@ impl MocaApp {
             return;
         }
         let bundle_dirs = Self::resolve_bundle_dirs(&pkg);
-        let resolved: Vec<ResolvedTask> = tasks
-            .into_iter()
-            .map(|decl| ResolvedTask {
-                pipeline_override: pkg
-                    .manifest
-                    .resolve_pipeline_override(&decl, &self.option_values),
-                decl,
-            })
-            .collect();
+        let mut resolved: Vec<ResolvedTask> = Vec::new();
+        for decl in tasks {
+            let items = pkg.manifest.resolve_batch_items(&decl, &self.option_values);
+            if items.is_empty() {
+                self.push_log(
+                    LogLevel::Warn,
+                    format!("任务「{}」未填入有效条目，已跳过", decl.label),
+                );
+            } else {
+                resolved.extend(items);
+            }
+        }
+        if resolved.is_empty() {
+            return;
+        }
+        self.push_log(
+            LogLevel::Info,
+            format!("已提交执行任务队列（共 {} 项）", resolved.len()),
+        );
         self.runtime.send(RuntimeCommand::RunTasks {
             instance_id: self.active_instance_id.clone(),
             game_name: pkg.manifest.name.clone(),
@@ -549,6 +606,16 @@ impl MocaApp {
 impl eframe::App for MocaApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events(ctx);
+        self.drain_hotkeys();
+        if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            if self.connected {
+                self.runtime.send(RuntimeCommand::CaptureFrame {
+                    instance_id: self.active_instance_id.clone(),
+                });
+            } else {
+                self.runtime.send(RuntimeCommand::ScanDevices);
+            }
+        }
         handle_borderless_resize(ctx);
     }
 
@@ -576,6 +643,100 @@ impl eframe::App for MocaApp {
 }
 
 impl MocaApp {
+    fn drain_hotkeys(&mut self) {
+        while let Some(action) = self.hotkeys.try_recv() {
+            match action {
+                GlobalHotkeyAction::EmergencyStop => {
+                    self.push_log(LogLevel::Warn, "[热键 F9] 已触发全局紧急急停");
+                }
+                GlobalHotkeyAction::ToggleWindow => {}
+                GlobalHotkeyAction::ToggleTriggers => {
+                    self.toggle_all_triggers_via_hotkey();
+                }
+            }
+        }
+    }
+
+    fn toggle_all_triggers_via_hotkey(&mut self) {
+        let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() else {
+            return;
+        };
+        if !self.connected {
+            self.push_log(LogLevel::Warn, "[热键 F8] 请先连接目标窗口后再切换实时辅助");
+            return;
+        }
+        let bundle_dirs = Self::resolve_bundle_dirs(&pkg);
+        let active_ids: Vec<String> = self
+            .active_triggers
+            .iter()
+            .filter(|(_, (on, _))| *on)
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        if !active_ids.is_empty() {
+            for tid in active_ids {
+                if let Some(task) = pkg.manifest.task.get(&tid).cloned() {
+                    let resolved = pkg.manifest.resolve_single_task(&task, &self.option_values);
+                    self.runtime.send(RuntimeCommand::SetTriggerActive {
+                        instance_id: self.active_instance_id.clone(),
+                        task_id: tid,
+                        active: false,
+                        game_name: pkg.manifest.name.clone(),
+                        bundle_dirs: bundle_dirs.clone(),
+                        task: Box::new(resolved),
+                        mode: self.execution_mode,
+                    });
+                }
+            }
+            self.push_log(LogLevel::Info, "[热键 F8] 已暂停实时辅助");
+            return;
+        }
+
+        let mut target_triggers: Vec<(String, TaskDecl)> = self
+            .selected_tasks
+            .iter()
+            .filter_map(|tid| {
+                pkg.manifest
+                    .task
+                    .get(tid)
+                    .filter(|t| {
+                        t.kind == TaskKind::Trigger && t.tier == moca_protocol::TaskTier::Free
+                    })
+                    .map(|t| (tid.clone(), t.clone()))
+            })
+            .collect();
+        if target_triggers.is_empty()
+            && let Some((tid, task)) = pkg.manifest.task.iter().find(|(_, t)| {
+                t.kind == TaskKind::Trigger && t.tier == moca_protocol::TaskTier::Free
+            })
+        {
+            target_triggers.push((tid.clone(), task.clone()));
+        }
+
+        if target_triggers.is_empty() {
+            self.push_log(LogLevel::Warn, "[热键 F8] 当前游戏包未配置实时辅助任务");
+            return;
+        }
+
+        for (tid, task) in target_triggers {
+            let label = task.label.clone();
+            let resolved = pkg.manifest.resolve_single_task(&task, &self.option_values);
+            self.runtime.send(RuntimeCommand::SetTriggerActive {
+                instance_id: self.active_instance_id.clone(),
+                task_id: tid,
+                active: true,
+                game_name: pkg.manifest.name.clone(),
+                bundle_dirs: bundle_dirs.clone(),
+                task: Box::new(resolved),
+                mode: self.execution_mode,
+            });
+            self.push_log(
+                LogLevel::Info,
+                format!("[热键 F8] 已恢复实时辅助:「{label}」"),
+            );
+        }
+    }
+
     fn start_enabled_triggers(&mut self) {
         let Some(pkg) = self.packages.get(self.selected_game_idx).cloned() else {
             return;
@@ -595,12 +756,7 @@ impl MocaApp {
             })
             .collect();
         for (tid, task) in enabled_triggers {
-            let resolved = ResolvedTask {
-                pipeline_override: pkg
-                    .manifest
-                    .resolve_pipeline_override(&task, &self.option_values),
-                decl: task.clone(),
-            };
+            let resolved = pkg.manifest.resolve_single_task(&task, &self.option_values);
             self.push_log(
                 LogLevel::Info,
                 format!("已自动启用持久化实时辅助:「{}」", task.label),
@@ -642,12 +798,7 @@ impl MocaApp {
                     }
                 } else {
                     let bundle_dirs = Self::resolve_bundle_dirs(pkg);
-                    let resolved = ResolvedTask {
-                        pipeline_override: pkg
-                            .manifest
-                            .resolve_pipeline_override(&task, &self.option_values),
-                        decl: task,
-                    };
+                    let resolved = pkg.manifest.resolve_single_task(&task, &self.option_values);
                     self.runtime.send(RuntimeCommand::SetTriggerActive {
                         instance_id: self.active_instance_id.clone(),
                         task_id,
@@ -686,12 +837,7 @@ impl MocaApp {
                     format!("策略选项已更新，正在热重载「{}」规则...", t.label),
                 );
                 let bundle_dirs = Self::resolve_bundle_dirs(pkg);
-                let resolved = ResolvedTask {
-                    pipeline_override: pkg
-                        .manifest
-                        .resolve_pipeline_override(&t, &self.option_values),
-                    decl: t,
-                };
+                let resolved = pkg.manifest.resolve_single_task(&t, &self.option_values);
                 self.runtime.send(RuntimeCommand::SetTriggerActive {
                     instance_id: self.active_instance_id.clone(),
                     task_id: tid,
@@ -784,6 +930,20 @@ impl MocaApp {
                             self.theme.accent.gamma_multiply(0.5),
                         );
                     }
+
+                    ui.scope(|ui| {
+                        pill_badge(
+                            ui,
+                            "F8/F9/F10",
+                            self.theme.text_muted,
+                            self.theme.bg_card,
+                            self.theme.border,
+                        );
+                    })
+                    .response
+                    .on_hover_text(
+                        "全局热键：\n• F8：暂停 / 恢复实时辅助\n• F9：紧急急停全部任务\n• F10：显示 / 最小化 Moca\n窗口内：\n• F5：截取画面 / 刷新窗口",
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let close_resp = self
@@ -1281,6 +1441,7 @@ impl MocaApp {
                                 34.0,
                                 true,
                             )
+                            .on_hover_text("截取实时画面 (F5)")
                             .clicked()
                         {
                             self.runtime.send(RuntimeCommand::CaptureFrame {
@@ -1324,15 +1485,13 @@ impl MocaApp {
                         .color(self.theme.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let any_active =
-                        self.tasks_running || self.active_triggers.values().any(|(on, _)| *on);
-                    if any_active {
+                    if self.tasks_running {
                         if self
                             .theme
                             .icon_button(
                                 ui,
                                 Some(UiIcon::Stop),
-                                "停止",
+                                "停止 (F9)",
                                 None,
                                 IconButtonVariant::Danger,
                                 25.0,

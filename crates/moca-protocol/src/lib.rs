@@ -8,7 +8,7 @@ pub use cloud::{
 pub use interface::{
     ControllerDecl, ControllerKind, ExecutionMode, GameInterface, GameTheme, OptionDecl,
     OptionInputType, OptionKind, OptionSelectItem, ResolvedTask, ResourceDecl, TaskDecl, TaskKind,
-    TaskTier,
+    TaskTier, parse_batch_input_items,
 };
 pub use profile::{DeviceTarget, InstanceProfile, SavedGameProfile};
 

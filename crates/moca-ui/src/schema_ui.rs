@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use moca_protocol::{
     GameInterface, OptionDecl, OptionInputType, OptionKind, TaskDecl, TaskKind, TaskTier,
+    parse_batch_input_items,
 };
 
 use crate::icons::{UiIcon, allocate_and_paint_icon};
@@ -90,28 +91,41 @@ pub fn render_task_list(
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let toggle_resp = theme.toggle_switch(ui, &mut is_enabled);
-                        if toggle_resp.changed() {
-                            if is_enabled {
-                                if !selected_tasks.contains(task_id) {
-                                    selected_tasks.push(task_id.clone());
+                        if task.kind == TaskKind::Action {
+                            allocate_and_paint_icon(
+                                ui,
+                                UiIcon::Bolt,
+                                15.0,
+                                if is_focused {
+                                    theme.accent_hover
+                                } else {
+                                    theme.accent
+                                },
+                            );
+                        } else {
+                            let toggle_resp = theme.toggle_switch(ui, &mut is_enabled);
+                            if toggle_resp.changed() {
+                                if is_enabled {
+                                    if !selected_tasks.contains(task_id) {
+                                        selected_tasks.push(task_id.clone());
+                                    }
+                                } else {
+                                    selected_tasks.retain(|id| id != task_id);
                                 }
-                            } else {
-                                selected_tasks.retain(|id| id != task_id);
-                            }
-                            *focused_task_id = Some(task_id.clone());
-                            if task.kind == TaskKind::Trigger {
-                                action = Some(SchemaAction::ToggleTrigger {
-                                    task_id: task_id.clone(),
-                                    task: task.clone(),
-                                    active: is_enabled,
-                                });
+                                *focused_task_id = Some(task_id.clone());
+                                if task.kind == TaskKind::Trigger {
+                                    action = Some(SchemaAction::ToggleTrigger {
+                                        task_id: task_id.clone(),
+                                        task: task.clone(),
+                                        active: is_enabled,
+                                    });
+                                }
                             }
                         }
 
                         let label_color = if is_focused {
                             theme.accent_hover
-                        } else if is_enabled {
+                        } else if task.kind == TaskKind::Action || is_enabled {
                             theme.text_primary
                         } else {
                             theme.text_secondary
@@ -130,7 +144,15 @@ pub fn render_task_list(
                         }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if task.kind == TaskKind::Trigger {
+                            if task.kind == TaskKind::Action {
+                                pill_badge(
+                                    ui,
+                                    "一次性",
+                                    theme.accent_hover,
+                                    theme.accent_soft_bg,
+                                    theme.accent.gamma_multiply(0.35),
+                                );
+                            } else if task.kind == TaskKind::Trigger {
                                 if is_running {
                                     let txt = if hit_count > 0 {
                                         format!("● {hit_count}")
@@ -258,11 +280,16 @@ pub fn render_task_inspector(
                     );
                 }
             } else {
+                let run_label = if task.kind == TaskKind::Action {
+                    "立即执行"
+                } else {
+                    "单独执行"
+                };
                 if theme
                     .icon_button(
                         ui,
                         Some(UiIcon::Play),
-                        "单独执行",
+                        run_label,
                         None,
                         IconButtonVariant::Primary,
                         26.0,
@@ -288,33 +315,36 @@ pub fn render_task_inspector(
         );
     }
 
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if theme.toggle_switch(ui, &mut is_enabled).changed() {
-            let tid = task_id.to_string();
-            if is_enabled {
-                if !selected_tasks.contains(&tid) {
-                    selected_tasks.push(tid.clone());
+    if task.kind != TaskKind::Action {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if theme.toggle_switch(ui, &mut is_enabled).changed() {
+                let tid = task_id.to_string();
+                if is_enabled {
+                    if !selected_tasks.contains(&tid) {
+                        selected_tasks.push(tid.clone());
+                    }
+                } else {
+                    selected_tasks.retain(|id| id != &tid);
                 }
-            } else {
-                selected_tasks.retain(|id| id != &tid);
+                if task.kind == TaskKind::Trigger {
+                    action = Some(SchemaAction::ToggleTrigger {
+                        task_id: tid,
+                        task: task.clone(),
+                        active: is_enabled,
+                    });
+                }
             }
-            if task.kind == TaskKind::Trigger {
-                action = Some(SchemaAction::ToggleTrigger {
-                    task_id: tid,
-                    task: task.clone(),
-                    active: is_enabled,
-                });
-            }
-        }
-        let hint = match (task.kind, is_enabled) {
-            (TaskKind::Trigger, true) => "已开启（连接窗口后自动运行并保存）",
-            (TaskKind::Trigger, false) => "开启实时辅助监听",
-            (TaskKind::Batch, true) => "已勾选加入批处理队列",
-            (TaskKind::Batch, false) => "勾选加入批处理队列",
-        };
-        ui.label(egui::RichText::new(hint).size(12.0).color(theme.text_muted));
-    });
+            let hint = match (task.kind, is_enabled) {
+                (TaskKind::Trigger, true) => "已开启（连接窗口后自动运行并保存）",
+                (TaskKind::Trigger, false) => "开启实时辅助监听",
+                (TaskKind::Batch, true) => "已勾选加入批处理队列",
+                (TaskKind::Batch, false) => "勾选加入批处理队列",
+                (TaskKind::Action, _) => "",
+            };
+            ui.label(egui::RichText::new(hint).size(12.0).color(theme.text_muted));
+        });
+    }
 
     if !task.option.is_empty() {
         ui.add_space(4.0);
@@ -500,18 +530,81 @@ fn render_option_widget(
         }
         OptionKind::Input => {
             let mut text = current.as_str().unwrap_or_default().to_string();
-            ui.label(
-                egui::RichText::new(label)
-                    .size(12.5)
-                    .color(theme.text_secondary),
-            );
-            let mut edit =
-                egui::TextEdit::singleline(&mut text).desired_width(ui.available_width());
-            if decl.input_type == OptionInputType::Password {
-                edit = edit.password(true);
-            }
-            if ui.add(edit).changed() {
-                *current = serde_json::Value::String(text);
+            if decl.multiline {
+                let count = parse_batch_input_items(&text).len();
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .size(12.5)
+                            .strong()
+                            .color(theme.text_secondary),
+                    );
+                    pill_badge(
+                        ui,
+                        &format!("共 {count} 条"),
+                        theme.accent_hover,
+                        theme.accent_soft_bg,
+                        theme.accent.gamma_multiply(0.4),
+                    );
+                    if let Some(default_str) = decl.default.as_ref().and_then(|v| v.as_str()) {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("重置默认").clicked() {
+                                text = default_str.to_string();
+                                *current = serde_json::Value::String(text.clone());
+                            }
+                        });
+                    }
+                });
+                ui.add_space(4.0);
+                let frame = egui::Frame::new()
+                    .fill(theme.bg_input)
+                    .stroke(egui::Stroke::new(1.0, theme.border))
+                    .corner_radius(egui::CornerRadius::same(theme.subcard_radius))
+                    .inner_margin(egui::Margin::same(6));
+                frame.show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("input_multiline_scroll", opt_key))
+                        .max_height(138.0)
+                        .show(ui, |ui| {
+                            let mut edit = egui::TextEdit::multiline(&mut text)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(ui.available_width())
+                                .desired_rows(6)
+                                .frame(egui::Frame::NONE);
+                            if let Some(hint) = &decl.placeholder {
+                                edit = edit.hint_text(hint);
+                            }
+                            if ui.add(edit).changed() {
+                                *current = serde_json::Value::String(text);
+                            }
+                        });
+                });
+                if let Some(desc) = &decl.description {
+                    ui.add_space(3.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(desc).size(11.5).color(theme.text_muted),
+                        )
+                        .wrap(),
+                    );
+                }
+            } else {
+                ui.label(
+                    egui::RichText::new(label)
+                        .size(12.5)
+                        .color(theme.text_secondary),
+                );
+                let mut edit =
+                    egui::TextEdit::singleline(&mut text).desired_width(ui.available_width());
+                if let Some(hint) = &decl.placeholder {
+                    edit = edit.hint_text(hint);
+                }
+                if decl.input_type == OptionInputType::Password {
+                    edit = edit.password(true);
+                }
+                if ui.add(edit).changed() {
+                    *current = serde_json::Value::String(text);
+                }
             }
         }
     }

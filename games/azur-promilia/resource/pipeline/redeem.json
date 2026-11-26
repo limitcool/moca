@@ -1,0 +1,212 @@
+{
+  "AP_RedeemEnsurePopup": {
+    "doc": "兑换码总入口前置导航：兼容主界面/Esc菜单/设置页/账户页/兑换弹窗任意起点",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": [
+      "AP_RedeemPopupReady",
+      "AP_RedeemClickEntry",
+      "AP_RedeemClickAccountTab",
+      "AP_RedeemClickSettingsGear",
+      "AP_RedeemPressEsc"
+    ]
+  },
+  "AP_RedeemPopupReady": {
+    "doc": "确认当前已弹出兑换码对话框（右下「确认」按钮出现）",
+    "recognition": "OCR",
+    "expected": "确认",
+    "roi": [540, 360, 620, 260],
+    "action": "DoNothing",
+    "next": []
+  },
+  "AP_RedeemPressEsc": {
+    "doc": "主世界画面按 Esc 唤出菜单",
+    "recognition": "DirectHit",
+    "action": "ClickKey",
+    "key": 27,
+    "next": [
+      "AP_RedeemClickSettingsGear",
+      "AP_RedeemClickAccountTab",
+      "AP_RedeemClickEntry"
+    ],
+    "timeout": 4000
+  },
+  "AP_RedeemClickSettingsGear": {
+    "doc": "点击 Esc 菜单左上角设置齿轮图标",
+    "recognition": "TemplateMatch",
+    "template": "redeem_menu_settings.png",
+    "roi": [75, 35, 110, 95],
+    "threshold": 0.72,
+    "action": "Click",
+    "next": [
+      "AP_RedeemClickAccountTab",
+      "AP_RedeemClickEntry"
+    ],
+    "timeout": 5000
+  },
+  "AP_RedeemClickAccountTab": {
+    "doc": "点击设置页底部分栏人头「账户」图标",
+    "recognition": "TemplateMatch",
+    "template": "redeem_settings_account.png",
+    "roi": [750, 560, 320, 160],
+    "threshold": 0.72,
+    "action": "Click",
+    "next": [
+      "AP_RedeemClickEntry"
+    ],
+    "timeout": 5000
+  },
+  "AP_RedeemClickEntry": {
+    "doc": "精准 OCR 识别账户页第一行右侧「点击兑换」按钮，严格物理隔离下方登出/注销按钮",
+    "recognition": "OCR",
+    "expected": "点击兑换",
+    "roi": [920, 125, 220, 65],
+    "action": "Click",
+    "next": [
+      "AP_RedeemPopupReady"
+    ],
+    "timeout": 5000
+  },
+  "AP_RedeemSubmitOne": {
+    "doc": "单码提交流水线：确保处于输入弹窗 -> 聚焦清空 -> InputText -> 点击确认",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "timeout": 6000,
+    "next": [
+      "AP_RedeemFindInput",
+      "AP_RedeemFindInputFallback",
+      "AP_RedeemReopenAndInput",
+      "AP_RedeemDismissOverlayAndRetry"
+    ]
+  },
+  "AP_RedeemReopenAndInput": {
+    "doc": "若上一轮成功/关闭弹窗退回了账户页，OCR 点击「点击兑换」重新弹出输入窗",
+    "recognition": "OCR",
+    "expected": "点击兑换",
+    "roi": [920, 125, 220, 65],
+    "action": "Click",
+    "next": [
+      "AP_RedeemFindInput",
+      "AP_RedeemFindInputFallback"
+    ],
+    "timeout": 4000
+  },
+  "AP_RedeemDismissOverlayAndRetry": {
+    "doc": "若残留了提示确认弹窗（非输入弹窗），先点掉「确认」再进入下一轮输入",
+    "recognition": "OCR",
+    "expected": "确认",
+    "roi": [400, 360, 700, 260],
+    "action": "Click",
+    "next": [
+      "AP_RedeemFindInput",
+      "AP_RedeemFindInputFallback",
+      "AP_RedeemReopenAndInput"
+    ],
+    "timeout": 3000
+  },
+  "AP_RedeemFindInput": {
+    "doc": "OCR 直接锚定空白输入栏内的「请输入兑换码」占位文字并点击聚焦",
+    "recognition": "OCR",
+    "expected": "请输入兑换码",
+    "roi": [260, 200, 760, 260],
+    "action": "Click",
+    "next": [
+      "AP_RedeemSelectAll"
+    ]
+  },
+  "AP_RedeemFindInputFallback": {
+    "doc": "若输入框内有残留文字遮盖占位提示，锚定「取消」按钮向右上方偏移点击输入胶囊正中",
+    "recognition": "OCR",
+    "expected": "取消",
+    "roi": [260, 360, 440, 260],
+    "action": "Click",
+    "target_offset": [115, -110, 0, 0],
+    "next": [
+      "AP_RedeemSelectAll"
+    ]
+  },
+  "AP_RedeemSelectAll": {
+    "doc": "按下 Ctrl (auto_up 防卡键)",
+    "recognition": "DirectHit",
+    "action": "KeyDown",
+    "key": 17,
+    "auto_up": true,
+    "next": [
+      "AP_RedeemKeyA"
+    ]
+  },
+  "AP_RedeemKeyA": {
+    "doc": "按 A 实现 Ctrl+A 全选残留文本",
+    "recognition": "DirectHit",
+    "action": "ClickKey",
+    "key": 65,
+    "next": [
+      "AP_RedeemReleaseCtrl"
+    ]
+  },
+  "AP_RedeemReleaseCtrl": {
+    "doc": "松开 Ctrl",
+    "recognition": "DirectHit",
+    "action": "KeyUp",
+    "key": 17,
+    "next": [
+      "AP_RedeemClearBackspace"
+    ]
+  },
+  "AP_RedeemClearBackspace": {
+    "doc": "Backspace 清空选中旧字符",
+    "recognition": "DirectHit",
+    "action": "ClickKey",
+    "key": 8,
+    "next": [
+      "AP_RedeemTypeCode"
+    ]
+  },
+  "AP_RedeemTypeCode": {
+    "doc": "由 runtime/protocol 注入单个兑换码",
+    "recognition": "DirectHit",
+    "action": "InputText",
+    "input_text": "",
+    "next": [
+      "AP_RedeemClickConfirm"
+    ]
+  },
+  "AP_RedeemClickConfirm": {
+    "doc": "OCR 识别并点击绿色「确认」兑换按钮",
+    "recognition": "OCR",
+    "expected": "确认",
+    "roi": [580, 360, 560, 260],
+    "action": "Click",
+    "next": [],
+    "timeout": 4000
+  },
+  "AP_RedeemFinishCleanup": {
+    "doc": "全部兑换码完成后关闭残余结果确认框并点击取消退出兑换弹窗",
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "timeout": 4000,
+    "next": [
+      "AP_RedeemClosePopupCancel",
+      "AP_RedeemCloseFinalResult"
+    ]
+  },
+  "AP_RedeemCloseFinalResult": {
+    "doc": "若停留在最后一条兑换结果确认弹窗，先点「确认」再关闭输入弹窗",
+    "recognition": "OCR",
+    "expected": "确认",
+    "roi": [400, 360, 700, 260],
+    "action": "Click",
+    "timeout": 3000,
+    "next": [
+      "AP_RedeemClosePopupCancel"
+    ]
+  },
+  "AP_RedeemClosePopupCancel": {
+    "doc": "点击兑换码输入弹窗的「取消」按钮关闭弹窗退回账户页",
+    "recognition": "OCR",
+    "expected": "取消",
+    "roi": [260, 360, 440, 260],
+    "action": "Click",
+    "next": []
+  }
+}

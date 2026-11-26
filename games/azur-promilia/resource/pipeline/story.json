@@ -88,7 +88,7 @@
     ]
   },
   "AP_StoryDialogConfirm": {
-    "doc": "点击提示弹窗「✓ 确认」胶囊按钮；点击后零硬性sleep，立即等待弹窗消失",
+    "doc": "识别「✓ 确认」胶囊按钮，点击前先排除兑换码弹窗以防误触",
     "recognition": {
       "type": "TemplateMatch",
       "param": {
@@ -98,7 +98,37 @@
         "method": 5
       }
     },
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 60,
+    "timeout": 1200,
+    "next": [
+      "AP_StoryGuardRedeemPopup",
+      "AP_StoryClickDialogConfirm"
+    ],
+    "on_error": [
+      "AP_StoryFastNext"
+    ]
+  },
+  "AP_StoryGuardRedeemPopup": {
+    "doc": "命中绿色确认按钮时排除兑换码弹窗，避免误点空确认",
+    "recognition": "OCR",
+    "expected": "兑换码|请输入兑换码",
+    "roi": [280, 240, 560, 180],
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "rate_limit": 800,
+    "next": [
+      "AP_AutoSkipStoryEntry"
+    ]
+  },
+  "AP_StoryClickDialogConfirm": {
+    "doc": "非兑换码弹窗时复刻 AP_StoryDialogConfirm 识别框执行点击",
+    "recognition": "DirectHit",
     "action": "Click",
+    "target": "AP_StoryDialogConfirm",
     "pre_delay": 0,
     "post_delay": 0,
     "rate_limit": 60,

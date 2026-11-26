@@ -13,18 +13,72 @@ mod imp {
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::{
-        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
-        QueryFullProcessImageNameW,
+        AttachThreadInput, GetCurrentProcess, OpenProcess, OpenProcessToken,
+        PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
     };
     use windows_sys::Win32::UI::Shell::{
         ExtractIconExW, SetCurrentProcessExplicitAppUserModelID, ShellExecuteW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, GetClientRect, GetIconInfo,
-        GetSystemMetrics, GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
-        ICONINFO, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG,
-        SW_SHOWNORMAL, SendMessageTimeoutW, SendMessageW, SetClassLongPtrW, WM_GETICON, WM_SETICON,
+        DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, GetClientRect,
+        GetForegroundWindow, GetIconInfo, GetSystemMetrics, GetWindowThreadProcessId, HICON,
+        ICON_BIG, ICON_SMALL, ICON_SMALL2, ICONINFO, IMAGE_ICON, IsIconic, LR_SHARED, LoadImageW,
+        SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL,
+        SendMessageTimeoutW, SendMessageW, SetClassLongPtrW, SetForegroundWindow, ShowWindow,
+        WM_GETICON, WM_SETICON,
     };
+
+    pub fn foreground_window_hwnd() -> isize {
+        unsafe { GetForegroundWindow() as isize }
+    }
+
+    pub fn is_current_process_foreground() -> bool {
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_null() {
+                return false;
+            }
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            pid != 0 && pid == std::process::id()
+        }
+    }
+
+    /// Toggle `hwnd` between minimized (when currently foreground) and foreground-restored.
+    ///
+    /// Returns `true` if the window was brought to the foreground, `false` if minimized.
+    pub fn toggle_window_foreground(hwnd: isize) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        let target = hwnd as HWND;
+        unsafe {
+            let fg = GetForegroundWindow();
+            if IsIconic(target) == 0 && fg == target {
+                ShowWindow(target, SW_MINIMIZE);
+                return false;
+            }
+            if IsIconic(target) != 0 {
+                ShowWindow(target, SW_RESTORE);
+            } else {
+                ShowWindow(target, SW_SHOW);
+            }
+            let fg_tid = if !fg.is_null() {
+                GetWindowThreadProcessId(fg, std::ptr::null_mut())
+            } else {
+                0
+            };
+            let target_tid = GetWindowThreadProcessId(target, std::ptr::null_mut());
+            if fg_tid != 0 && target_tid != 0 && fg_tid != target_tid {
+                AttachThreadInput(target_tid, fg_tid, 1);
+                SetForegroundWindow(target);
+                AttachThreadInput(target_tid, fg_tid, 0);
+            } else {
+                SetForegroundWindow(target);
+            }
+            true
+        }
+    }
 
     pub fn is_current_process_elevated() -> bool {
         unsafe {
@@ -491,9 +545,22 @@ mod imp {
     }
 
     pub fn set_app_user_model_id(_app_id: &str) {}
+
+    pub fn foreground_window_hwnd() -> isize {
+        0
+    }
+
+    pub fn is_current_process_foreground() -> bool {
+        false
+    }
+
+    pub fn toggle_window_foreground(_hwnd: isize) -> bool {
+        false
+    }
 }
 
 pub use imp::{
-    apply_window_icon_from_exe, get_client_size, get_window_icon_rgba, is_current_process_elevated,
-    is_window_process_elevated, open_external_url, relaunch_as_admin, set_app_user_model_id,
+    apply_window_icon_from_exe, foreground_window_hwnd, get_client_size, get_window_icon_rgba,
+    is_current_process_elevated, is_current_process_foreground, is_window_process_elevated,
+    open_external_url, relaunch_as_admin, set_app_user_model_id, toggle_window_foreground,
 };

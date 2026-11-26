@@ -14,6 +14,8 @@ pub enum TaskKind {
     Batch,
     /// Continuous real-time background trigger toggled directly by an on/off switch.
     Trigger,
+    /// One-shot manual utility action (no toggle switch, excluded from daily batch queue).
+    Action,
 }
 
 /// Task monetization / access tier.
@@ -73,7 +75,7 @@ pub struct ControllerDecl {
     pub config: ControllerConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskDecl {
     pub label: String,
     #[serde(default)]
@@ -96,6 +98,21 @@ pub struct TaskDecl {
     /// Moca extension: Cloud strategy identifier when `tier == TaskTier::Vip`.
     #[serde(default)]
     pub cloud_strategy: Option<String>,
+    /// Moca extension: Optional pipeline entry run once before looping batch items.
+    #[serde(default)]
+    pub pre_entry: Option<String>,
+    /// Moca extension: Optional pipeline entry run once after all batch items complete.
+    #[serde(default)]
+    pub post_entry: Option<String>,
+    /// Moca extension: Option name whose multi-line/comma-separated input expands this task into one run per item.
+    #[serde(default)]
+    pub batch_input_option: Option<String>,
+    /// Moca extension: Optional 1280x720 ROI `[x, y, w, h]` to capture and OCR after each run.
+    #[serde(default)]
+    pub result_ocr_roi: Option<[u32; 4]>,
+    /// Moca extension: UI strings ignored when extracting clean status messages from OCR output.
+    #[serde(default)]
+    pub result_ocr_ignore: Vec<String>,
 }
 
 /// Paired task declaration and computed `pipeline_override` JSON passed to runtime.
@@ -103,6 +120,11 @@ pub struct TaskDecl {
 pub struct ResolvedTask {
     pub decl: TaskDecl,
     pub pipeline_override: Option<serde_json::Value>,
+    pub item_label: Option<String>,
+    pub pre_entry: Option<String>,
+    pub post_entry: Option<String>,
+    pub result_ocr_roi: Option<[u32; 4]>,
+    pub result_ocr_ignore: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -155,6 +177,10 @@ pub struct OptionDecl {
     pub pipeline_override: Option<serde_json::Value>,
     #[serde(default)]
     pub input_type: OptionInputType,
+    #[serde(default)]
+    pub multiline: bool,
+    #[serde(default)]
+    pub placeholder: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -307,7 +333,17 @@ impl GameInterface {
                         merge_pipeline_json(&mut merged, ov);
                     }
                 }
-                OptionKind::Input => {}
+                OptionKind::Input => {
+                    if let Some(ov) = &opt_decl.pipeline_override
+                        && let Some(raw) = current.and_then(|v| v.as_str())
+                    {
+                        let val = raw.trim();
+                        if !val.is_empty() {
+                            let substituted = substitute_input_placeholder(ov, val);
+                            merge_pipeline_json(&mut merged, &substituted);
+                        }
+                    }
+                }
             }
         }
 
@@ -315,6 +351,59 @@ impl GameInterface {
             None
         } else {
             Some(serde_json::Value::Object(merged))
+        }
+    }
+
+    /// Resolve a task into one `ResolvedTask` (or multiple when `batch_input_option` is configured).
+    pub fn resolve_batch_items(
+        &self,
+        task: &TaskDecl,
+        option_values: &HashMap<String, serde_json::Value>,
+    ) -> Vec<ResolvedTask> {
+        if let Some(opt_key) = &task.batch_input_option
+            && let Some(opt_decl) = self.option.get(opt_key)
+        {
+            let raw = option_values
+                .get(opt_key)
+                .or(opt_decl.default.as_ref())
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let items = parse_batch_input_items(raw);
+            return items
+                .into_iter()
+                .map(|code| {
+                    let mut per_item_opts = option_values.clone();
+                    per_item_opts.insert(opt_key.clone(), serde_json::Value::String(code.clone()));
+                    let ov = self.resolve_pipeline_override(task, &per_item_opts);
+                    ResolvedTask {
+                        decl: task.clone(),
+                        pipeline_override: ov,
+                        item_label: Some(code),
+                        pre_entry: task.pre_entry.clone(),
+                        post_entry: task.post_entry.clone(),
+                        result_ocr_roi: task.result_ocr_roi,
+                        result_ocr_ignore: task.result_ocr_ignore.clone(),
+                    }
+                })
+                .collect();
+        }
+        vec![self.resolve_single_task(task, option_values)]
+    }
+
+    /// Resolve a single task declaration with the given option values.
+    pub fn resolve_single_task(
+        &self,
+        task: &TaskDecl,
+        option_values: &HashMap<String, serde_json::Value>,
+    ) -> ResolvedTask {
+        ResolvedTask {
+            decl: task.clone(),
+            pipeline_override: self.resolve_pipeline_override(task, option_values),
+            item_label: None,
+            pre_entry: task.pre_entry.clone(),
+            post_entry: task.post_entry.clone(),
+            result_ocr_roi: task.result_ocr_roi,
+            result_ocr_ignore: task.result_ocr_ignore.clone(),
         }
     }
 
@@ -351,6 +440,35 @@ fn merge_pipeline_json(
                 dst.insert(key.clone(), val.clone());
             }
         }
+    }
+}
+
+/// Split multi-line / comma / whitespace-separated text into deduplicated non-empty items in original order.
+pub fn parse_batch_input_items(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in raw.split(|c: char| c.is_whitespace() || matches!(c, ',' | '，' | ';' | '；')) {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() && !out.iter().any(|existing: &String| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn substitute_input_placeholder(val: &serde_json::Value, input: &str) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s) => serde_json::Value::String(s.replace("{input}", input)),
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|v| substitute_input_placeholder(v, input))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), substitute_input_placeholder(v, input)))
+                .collect(),
+        ),
+        other => other.clone(),
     }
 }
 

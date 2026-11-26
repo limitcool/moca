@@ -73,6 +73,20 @@
       "group": "日常托管",
       "tier": "free"
     },
+    "RedeemCodes": {
+      "label": "批量兑换礼包码",
+      "description": "自动打开 设置 → 账户 → 兑换码 依次提交全部礼包码，并实时 OCR 读取每条兑换结果（成功/已使用/无效）输出到运行日志。",
+      "entry": "AP_RedeemSubmitOne",
+      "pre_entry": "AP_RedeemEnsurePopup",
+      "post_entry": "AP_RedeemFinishCleanup",
+      "batch_input_option": "redeem_codes",
+      "result_ocr_roi": [180, 60, 920, 560],
+      "result_ocr_ignore": ["兑换码", "请输入兑换码", "取消", "确认", "点击兑换", "账户相关"],
+      "group": "快捷工具",
+      "kind": "action",
+      "tier": "free",
+      "option": ["redeem_codes"]
+    },
     "CloudHomelandPlanner": {
       "label": "家园最优奇波排班",
       "description": "VIP 云端大脑：OCR 识别奇波技能特长与设施等级，云端求解最优生产排班。",
@@ -220,6 +234,19 @@
         { "name": "稳健生存优先（自动闪避）", "label": "稳健闪避", "value": "safe" },
         { "name": "极限竞速输出", "label": "极限输出", "value": "burst" }
       ]
+    },
+    "redeem_codes": {
+      "type": "input",
+      "label": "内置 / 自定义礼包兑换码（一行一个）",
+      "description": "内置公测全套兑换码，也可自由增删或粘贴多行，点击上方「立即执行」即可依次兑换并在日志打印每条结果。",
+      "multiline": true,
+      "placeholder": "每行输入一个兑换码，支持直接粘贴多行",
+      "default": "LSXY520\nLSXYFULI\nLSXYGONGCE\nLSXYLIBAO\nLSXYTAP1126\nLSXYBILIBILI1126\nLSXYHYKB1126\nLSXYXIAOMI1126\nLSXYWEGAME1126\nLSXY43991126\nLSXYDOUYIN1126\nLSXYHUAWEI1126\nLSXYLIANXIANG1126",
+      "pipeline_override": {
+        "AP_RedeemTypeCode": {
+          "input_text": "{input}"
+        }
+      }
     }
   }
 }

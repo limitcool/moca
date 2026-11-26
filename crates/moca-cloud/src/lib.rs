@@ -103,6 +103,7 @@ mod tests {
             kind: TaskKind::Batch,
             tier: TaskTier::Vip,
             cloud_strategy: Some("rogue_v1".into()),
+            ..Default::default()
         }
     }
 
