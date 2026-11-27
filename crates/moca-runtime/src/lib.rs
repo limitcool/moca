@@ -1,7 +1,12 @@
 pub mod packages;
+pub mod updater;
 pub mod worker;
 
 pub use packages::{LoadedGamePackage, resolve_workspace_subdir, scan_game_packages};
+pub use updater::{
+    NodeOptimizeReport, NodeProbeResult, UpdateCheckInfo, UpdatePackageKind, UpdaterConfig,
+    cleanup_stale_update_files, optimize_client_nodes,
+};
 pub use worker::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSender};
 
 use thiserror::Error;

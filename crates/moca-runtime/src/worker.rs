@@ -13,6 +13,10 @@ use moca_maa::{
 use moca_protocol::{DeviceTarget, ExecutionMode, ResolvedTask};
 use tokio::sync::{Mutex, mpsc as tokio_mpsc};
 
+use crate::updater::{
+    NodeOptimizeReport, UpdateCheckInfo, UpdaterConfig, check_for_updates,
+    download_and_install_update, optimize_client_nodes,
+};
 use crate::{LoadedGamePackage, resolve_workspace_subdir, scan_game_packages};
 
 #[derive(Debug, Clone)]
@@ -49,6 +53,18 @@ pub enum RuntimeCommand {
     },
     StopTasks {
         instance_id: String,
+    },
+    CheckForUpdates {
+        current_version: String,
+        local_maa_version: Option<String>,
+        config: UpdaterConfig,
+        silent: bool,
+    },
+    DownloadAndInstallUpdate {
+        info: Box<UpdateCheckInfo>,
+    },
+    OptimizeUpdateNodes {
+        config: UpdaterConfig,
     },
 }
 
@@ -92,6 +108,24 @@ pub enum RuntimeEvent {
         instance_id: String,
         task_id: String,
         count: u32,
+    },
+    UpdateCheckResult {
+        info: Result<UpdateCheckInfo, String>,
+        silent: bool,
+    },
+    UpdateDownloadProgress {
+        downloaded: u64,
+        total: u64,
+        source: String,
+    },
+    UpdateReadyToRestart {
+        version: String,
+    },
+    UpdateFailed {
+        error: String,
+    },
+    UpdateNodesOptimized {
+        report: NodeOptimizeReport,
     },
     Log {
         level: LogLevel,
@@ -511,6 +545,78 @@ impl RuntimeHandle {
                                         format!("已停止实例 [{instance_id}] 当前任务"),
                                     );
                                 }
+                            }
+                            RuntimeCommand::OptimizeUpdateNodes { config } => {
+                                tokio::spawn(async move {
+                                    let report = optimize_client_nodes(&config).await;
+                                    emit(
+                                        &tx,
+                                        rp.as_deref(),
+                                        RuntimeEvent::UpdateNodesOptimized { report },
+                                    );
+                                });
+                            }
+                            RuntimeCommand::CheckForUpdates {
+                                current_version,
+                                local_maa_version,
+                                config,
+                                silent,
+                            } => {
+                                tokio::spawn(async move {
+                                    let res = check_for_updates(
+                                        &current_version,
+                                        local_maa_version.as_deref(),
+                                        &config,
+                                    )
+                                    .await;
+                                    emit(
+                                        &tx,
+                                        rp.as_deref(),
+                                        RuntimeEvent::UpdateCheckResult { info: res, silent },
+                                    );
+                                });
+                            }
+                            RuntimeCommand::DownloadAndInstallUpdate { info } => {
+                                tokio::spawn(async move {
+                                    let tx_prog = tx.clone();
+                                    let rp_prog = rp.clone();
+                                    let res = download_and_install_update(&info, move |downloaded, total, source| {
+                                        emit(
+                                            &tx_prog,
+                                            rp_prog.as_deref(),
+                                            RuntimeEvent::UpdateDownloadProgress {
+                                                downloaded,
+                                                total,
+                                                source,
+                                            },
+                                        );
+                                    })
+                                    .await;
+                                    match res {
+                                        Ok(_) => {
+                                            emit(
+                                                &tx,
+                                                rp.as_deref(),
+                                                RuntimeEvent::UpdateReadyToRestart {
+                                                    version: info.latest_version.clone(),
+                                                },
+                                            );
+                                        }
+                                        Err(error) => {
+                                            emit_log(
+                                                &tx,
+                                                rp.as_deref(),
+                                                LogLevel::Error,
+                                                format!("自动更新失败: {error}"),
+                                            );
+                                            emit(
+                                                &tx,
+                                                rp.as_deref(),
+                                                RuntimeEvent::UpdateFailed { error },
+                                            );
+                                        }
+                                    }
+                                });
                             }
                         }
                     }

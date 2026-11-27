@@ -58,13 +58,18 @@ jobs:
         run: cargo clippy --release -p moca-ui -- -D warnings
 
       - name: Build release binary (Windows x64)
+        env:
+          MOCA_UPDATE_MIRRORS: ${{ vars.MOCA_UPDATE_MIRRORS }}
         run: cargo build --release -p moca-ui
 
-      - name: Assemble portable Windows x64 bundle
+      - name: Assemble portable Windows x64 bundle & patch manifest
         shell: pwsh
         run: |
           $stage = "dist/Moca-windows-x86_64"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          $patchStage = "dist/Moca-patch-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $stage, $patchStage | Out-Null
+
+          # Full portable bundle
           Copy-Item "target/release/moca-ui.exe" "$stage/Moca.exe"
           Copy-Item "vendor/maa-sdk/bin/*" "$stage/" -Recurse -Force
           Copy-Item "assets" "$stage/assets" -Recurse -Force
@@ -72,15 +77,80 @@ jobs:
           Copy-Item "README.md", "LICENSE" "$stage/"
           7z a -tzip -mx=5 "dist/Moca-windows-x86_64.zip" ".\$stage\*" | Out-Null
 
+          # Lightweight hot-patch bundle (excludes heavy MaaSDK DLLs and 21MB OCR weights)
+          Copy-Item "target/release/moca-ui.exe" "$patchStage/Moca.exe"
+          Copy-Item "assets" "$patchStage/assets" -Recurse -Force
+          Copy-Item "games" "$patchStage/games" -Recurse -Force
+          Get-ChildItem "$patchStage/games" -Recurse -Directory -Filter "model" | Remove-Item -Recurse -Force
+          Copy-Item "README.md", "LICENSE" "$patchStage/"
+          7z a -tzip -mx=5 "dist/Moca-patch-windows-x86_64.zip" ".\$patchStage\*" | Out-Null
+
+          # Generate latest.json manifest (UTF-8 without BOM)
+          $ver = if ($env:GITHUB_REF_NAME -match '^v(.+)$') {
+            $Matches[1]
+          } else {
+            ((Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value)
+          }
+          $tag = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { "v$ver" }
+          $notes = (git log -n 8 --pretty=format:"- %s" 2>$null) -join "`n"
+          if ([string]::IsNullOrWhiteSpace($notes)) { $notes = "Release $tag" }
+          $fullHash = (Get-FileHash "dist/Moca-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $patchHash = (Get-FileHash "dist/Moca-patch-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            version = $ver
+            tag = $tag
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            maa_sdk_version = $env:MAA_SDK_VERSION.TrimStart('v')
+            notes = $notes
+            patch = [ordered]@{
+              file = "Moca-patch-windows-x86_64.zip"
+              size = (Get-Item "dist/Moca-patch-windows-x86_64.zip").Length
+              sha256 = $patchHash
+            }
+            full = [ordered]@{
+              file = "Moca-windows-x86_64.zip"
+              size = (Get-Item "dist/Moca-windows-x86_64.zip").Length
+              sha256 = $fullHash
+            }
+          } | ConvertTo-Json -Depth 4
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) "dist/latest.json"), $manifest, [System.Text.UTF8Encoding]::new($false))
+
       - name: Upload Windows x64 build artifact
         uses: actions/upload-artifact@v4
         with:
           name: Moca-windows-x86_64
-          path: dist/Moca-windows-x86_64.zip
+          path: |
+            dist/Moca-windows-x86_64.zip
+            dist/Moca-patch-windows-x86_64.zip
+            dist/latest.json
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Moca-windows-x86_64.zip
+          files: |
+            dist/Moca-windows-x86_64.zip
+            dist/Moca-patch-windows-x86_64.zip
+            dist/latest.json
           generate_release_notes: true
+
+      - name: Sync release assets to Cloudflare R2
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:R2_BUCKET) -or [string]::IsNullOrWhiteSpace($env:R2_ENDPOINT) -or [string]::IsNullOrWhiteSpace($env:AWS_ACCESS_KEY_ID) -or [string]::IsNullOrWhiteSpace($env:AWS_SECRET_ACCESS_KEY)) {
+            Write-Host "Cloudflare R2 secrets are not configured; skipping R2 mirror sync."
+            exit 0
+          }
+          $tag = $env:GITHUB_REF_NAME
+          aws s3 cp "dist/Moca-windows-x86_64.zip" "s3://$env:R2_BUCKET/Moca-windows-x86_64.zip" --endpoint-url "$env:R2_ENDPOINT"
+          aws s3 cp "dist/Moca-windows-x86_64.zip" "s3://$env:R2_BUCKET/releases/$tag/Moca-windows-x86_64.zip" --endpoint-url "$env:R2_ENDPOINT"
+          aws s3 cp "dist/Moca-patch-windows-x86_64.zip" "s3://$env:R2_BUCKET/Moca-patch-windows-x86_64.zip" --endpoint-url "$env:R2_ENDPOINT"
+          aws s3 cp "dist/Moca-patch-windows-x86_64.zip" "s3://$env:R2_BUCKET/releases/$tag/Moca-patch-windows-x86_64.zip" --endpoint-url "$env:R2_ENDPOINT"
+          aws s3 cp "dist/latest.json" "s3://$env:R2_BUCKET/latest.json" --endpoint-url "$env:R2_ENDPOINT" --cache-control "no-cache, max-age=60" --content-type "application/json; charset=utf-8"

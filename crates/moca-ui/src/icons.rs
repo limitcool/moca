@@ -26,6 +26,7 @@ pub enum UiIcon {
     Monitor,
     Terminal,
     ListChecks,
+    Download,
 }
 
 pub fn allocate_and_paint_icon(
@@ -299,6 +300,14 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: UiIcon, color: Colo
                 painter.line_segment([pt(10.5, y), pt(20.0, y)], stroke);
                 painter.circle_filled(pt(6.0, y), s * 0.065, color);
             }
+        }
+        UiIcon::Download => {
+            painter.line_segment([pt(12.0, 4.5), pt(12.0, 15.0)], stroke);
+            painter.line_segment([pt(8.0, 11.5), pt(12.0, 15.5)], stroke);
+            painter.line_segment([pt(16.0, 11.5), pt(12.0, 15.5)], stroke);
+            painter.line_segment([pt(5.0, 17.0), pt(5.0, 19.5)], stroke);
+            painter.line_segment([pt(5.0, 19.5), pt(19.0, 19.5)], stroke);
+            painter.line_segment([pt(19.0, 17.0), pt(19.0, 19.5)], stroke);
         }
     }
 }

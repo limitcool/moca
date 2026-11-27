@@ -15,7 +15,8 @@ use moca_protocol::{
 };
 use moca_runtime::worker::LogLevel;
 use moca_runtime::{
-    LoadedGamePackage, RuntimeCommand, RuntimeEvent, RuntimeHandle, resolve_workspace_subdir,
+    LoadedGamePackage, NodeProbeResult, RuntimeCommand, RuntimeEvent, RuntimeHandle,
+    UpdateCheckInfo, UpdaterConfig, cleanup_stale_update_files, resolve_workspace_subdir,
 };
 
 use crate::fonts::configure_cjk_fonts;
@@ -85,6 +86,20 @@ pub struct MocaApp {
     preview_size: Option<[usize; 2]>,
     roi_tool: RoiToolState,
     logs: Vec<LogEntry>,
+
+    updater_config: UpdaterConfig,
+    update_checking: bool,
+    update_optimizing: bool,
+    update_info: Option<UpdateCheckInfo>,
+    update_error: Option<String>,
+    update_modal_open: bool,
+    update_downloading: bool,
+    update_progress: Option<(u64, u64, String)>,
+    node_probe_results: Vec<NodeProbeResult>,
+    node_optimize_summary: Option<String>,
+    custom_mirrors_text: String,
+    cf_ips_text: String,
+    initial_update_checked: bool,
 }
 
 impl MocaApp {
@@ -160,6 +175,11 @@ impl MocaApp {
             });
         }
 
+        cleanup_stale_update_files();
+        let updater_config = UpdaterConfig::load(&profiles_dir().join("updater.toml"));
+        let custom_mirrors_text = updater_config.custom_mirrors.join("\n");
+        let cf_ips_text = updater_config.cf_preferred_ips.join("\n");
+
         let moca_icon_texture = load_embedded_moca_icon(&cc.egui_ctx);
 
         Self {
@@ -198,6 +218,19 @@ impl MocaApp {
             preview_size: None,
             roi_tool: RoiToolState::new(),
             logs,
+            updater_config,
+            update_checking: false,
+            update_optimizing: false,
+            update_info: None,
+            update_error: None,
+            update_modal_open: false,
+            update_downloading: false,
+            update_progress: None,
+            node_probe_results: Vec::new(),
+            node_optimize_summary: None,
+            custom_mirrors_text,
+            cf_ips_text,
+            initial_update_checked: false,
         }
     }
 
@@ -295,14 +328,18 @@ impl MocaApp {
         self.recompute_win32_matches();
     }
 
-    fn open_repo_url(&mut self, ctx: &egui::Context) {
-        if let Err(err) = moca_maa::open_external_url(GITHUB_REPO_URL) {
+    fn open_external_url_with_fallback(&mut self, ctx: &egui::Context, url: &str) {
+        if let Err(err) = moca_maa::open_external_url(url) {
             self.push_log(
                 LogLevel::Warn,
-                format!("打开 GitHub 链接失败 ({err})，尝试默认回退"),
+                format!("打开链接失败 ({err})，尝试默认回退"),
             );
-            ctx.open_url(egui::OpenUrl::new_tab(GITHUB_REPO_URL));
+            ctx.open_url(egui::OpenUrl::new_tab(url));
         }
+    }
+
+    fn open_repo_url(&mut self, ctx: &egui::Context) {
+        self.open_external_url_with_fallback(ctx, GITHUB_REPO_URL);
     }
 
     fn save_current_profile(&mut self) {
@@ -422,6 +459,10 @@ impl MocaApp {
                     self.maa_version = Some(version);
                     self.maa_error = None;
                     self.runtime.send(RuntimeCommand::ScanDevices);
+                    if !self.initial_update_checked {
+                        self.initial_update_checked = true;
+                        self.trigger_update_check(true);
+                    }
                 }
                 RuntimeEvent::MaaInitFailed { error } => {
                     self.maa_error = Some(error);
@@ -567,6 +608,94 @@ impl MocaApp {
                         entry.1 = count;
                     }
                 }
+                RuntimeEvent::UpdateCheckResult { info, silent } => {
+                    self.update_checking = false;
+                    match info {
+                        Ok(res) => {
+                            self.update_error = None;
+                            if let Some(ref updated_cfg) = res.updated_config {
+                                self.updater_config = updated_cfg.clone();
+                                if let Err(err) = self
+                                    .updater_config
+                                    .save(&profiles_dir().join("updater.toml"))
+                                {
+                                    self.push_log(
+                                        LogLevel::Warn,
+                                        format!("保存本机优选节点缓存失败: {err}"),
+                                    );
+                                } else if !updated_cfg.cached_cf_ips.is_empty() {
+                                    self.push_log(
+                                        LogLevel::Info,
+                                        format!(
+                                            "已完成本机节点优选并缓存 CF IP: {}",
+                                            updated_cfg.cached_cf_ips.join(", ")
+                                        ),
+                                    );
+                                }
+                            }
+                            if res.has_update {
+                                self.push_log(
+                                    LogLevel::Info,
+                                    format!(
+                                        "发现新版本 v{}（{} · {} ms，将下载{}）",
+                                        res.latest_version,
+                                        res.source_name,
+                                        res.latency_ms,
+                                        res.package_kind.label()
+                                    ),
+                                );
+                            } else if !silent {
+                                self.push_log(
+                                    LogLevel::Info,
+                                    format!(
+                                        "当前已是最新版本 v{}（{} · {} ms）",
+                                        res.current_version, res.source_name, res.latency_ms
+                                    ),
+                                );
+                            }
+                            self.update_info = Some(res);
+                        }
+                        Err(err) => {
+                            if !silent {
+                                self.push_log(LogLevel::Warn, format!("检查更新失败: {err}"));
+                            }
+                            self.update_error = Some(err);
+                        }
+                    }
+                }
+                RuntimeEvent::UpdateNodesOptimized { report } => {
+                    self.update_optimizing = false;
+                    self.updater_config = report.updated_config;
+                    if let Err(err) = self
+                        .updater_config
+                        .save(&profiles_dir().join("updater.toml"))
+                    {
+                        self.push_log(LogLevel::Warn, format!("保存优选配置失败: {err}"));
+                    }
+                    self.push_log(LogLevel::Info, format!("本机优选完成：{}", report.summary));
+                    self.node_probe_results = report.results;
+                    self.node_optimize_summary = Some(report.summary);
+                }
+                RuntimeEvent::UpdateDownloadProgress {
+                    downloaded,
+                    total,
+                    source,
+                } => {
+                    self.update_progress = Some((downloaded, total, source));
+                }
+                RuntimeEvent::UpdateReadyToRestart { version } => {
+                    self.update_downloading = false;
+                    self.push_log(
+                        LogLevel::Info,
+                        format!("新版本 v{version} 更新准备完毕，正在重启..."),
+                    );
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                    std::process::exit(0);
+                }
+                RuntimeEvent::UpdateFailed { error } => {
+                    self.update_downloading = false;
+                    self.update_error = Some(error);
+                }
                 RuntimeEvent::Log { level, message } => {
                     self.push_log(level, message);
                 }
@@ -631,6 +760,7 @@ impl eframe::App for MocaApp {
         self.render_middle_inspector_panel(ui);
         self.render_bottom_logs(ui);
         self.render_preview_center(ui);
+        self.render_update_modal(ui.ctx());
 
         let win_rect = ui.ctx().viewport_rect();
         ui.painter().rect_stroke(
@@ -875,6 +1005,7 @@ impl MocaApp {
 
                 let mut interactive_right_x = bar_rect.right();
                 let mut open_repo_clicked = false;
+                let mut open_update_modal = false;
 
                 ui.horizontal(|ui| {
                     if let Some(tex) = &self.moca_icon_texture {
@@ -990,11 +1121,81 @@ impl MocaApp {
                         if gh_resp.clicked() {
                             open_repo_clicked = true;
                         }
+
+                        ui.add_space(6.0);
+
+                        let has_update = self
+                            .update_info
+                            .as_ref()
+                            .is_some_and(|info| info.has_update);
+                        let (upd_label, upd_variant, upd_tip) = if self.update_downloading {
+                            let pct = self.update_progress.as_ref().and_then(|(done, total, _)| {
+                                (*total > 0).then_some((*done * 100 / *total).min(100))
+                            });
+                            let label = match pct {
+                                Some(p) => format!("更新中 {p}%"),
+                                None => "更新中...".to_string(),
+                            };
+                            (
+                                label,
+                                IconButtonVariant::Primary,
+                                "正在下载并校验更新包，点击查看进度",
+                            )
+                        } else if has_update {
+                            let ver = self
+                                .update_info
+                                .as_ref()
+                                .map(|i| i.latest_version.as_str())
+                                .unwrap_or("");
+                            (
+                                format!("发现更新 v{ver}"),
+                                IconButtonVariant::Primary,
+                                "检测到 Moca 新版本，点击查看更新内容并一键更新",
+                            )
+                        } else if self.update_checking {
+                            (
+                                "检查中...".to_string(),
+                                IconButtonVariant::Secondary,
+                                "正在并发测速检测最新版本与加速节点...",
+                            )
+                        } else {
+                            (
+                                "检查更新".to_string(),
+                                IconButtonVariant::Secondary,
+                                "检查 Moca 新版本及配置加速镜像 / Cloudflare 优选 IP",
+                            )
+                        };
+                        let upd_resp = self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Download),
+                                &upd_label,
+                                None,
+                                upd_variant,
+                                26.0,
+                                false,
+                            )
+                            .on_hover_text(upd_tip);
+                        interactive_right_x = interactive_right_x.min(upd_resp.rect.left() - 6.0);
+                        if upd_resp.clicked() {
+                            open_update_modal = true;
+                        }
                     });
                 });
 
                 if open_repo_clicked {
                     self.open_repo_url(ui.ctx());
+                }
+                if open_update_modal {
+                    self.update_modal_open = true;
+                    let has_update = self
+                        .update_info
+                        .as_ref()
+                        .is_some_and(|info| info.has_update);
+                    if !has_update && !self.update_checking && !self.update_downloading {
+                        self.trigger_update_check(false);
+                    }
                 }
 
                 // Only register window-drag sensing on the non-interactive left/spacer region so
@@ -1922,6 +2123,516 @@ impl MocaApp {
                     }
                 });
             });
+    }
+
+    fn sync_updater_text_fields(&mut self) {
+        self.updater_config.custom_mirrors = self
+            .custom_mirrors_text
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        self.updater_config.cf_preferred_ips = self
+            .cf_ips_text
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect();
+    }
+
+    fn trigger_node_optimize(&mut self) {
+        if self.update_optimizing || self.update_downloading {
+            return;
+        }
+        self.sync_updater_text_fields();
+        self.update_optimizing = true;
+        self.node_optimize_summary = None;
+        self.runtime.send(RuntimeCommand::OptimizeUpdateNodes {
+            config: self.updater_config.clone(),
+        });
+    }
+
+    fn trigger_update_check(&mut self, silent: bool) {
+        if self.update_checking || self.update_downloading {
+            return;
+        }
+        self.update_checking = true;
+        self.update_error = None;
+        self.runtime.send(RuntimeCommand::CheckForUpdates {
+            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            local_maa_version: self.maa_version.clone(),
+            config: self.updater_config.clone(),
+            silent,
+        });
+    }
+
+    fn render_update_modal(&mut self, ctx: &egui::Context) {
+        if !self.update_modal_open {
+            return;
+        }
+
+        let mut open = self.update_modal_open;
+        let mut start_download: Option<UpdateCheckInfo> = None;
+        let mut trigger_recheck = false;
+        let mut optimize_nodes_clicked = false;
+        let mut open_release_url: Option<String> = None;
+        let mut save_and_recheck = false;
+
+        let window_frame = egui::Frame::new()
+            .fill(self.theme.bg_card)
+            .stroke(Stroke::new(1.0, self.theme.border_strong))
+            .corner_radius(CornerRadius::same(self.theme.card_radius))
+            .inner_margin(Margin::same(18));
+
+        egui::Window::new("应用更新与节点优选")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .fixed_size(egui::vec2(520.0, 0.0))
+            .frame(window_frame)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    pill_badge(
+                        ui,
+                        &format!("当前版本 v{}", env!("CARGO_PKG_VERSION")),
+                        self.theme.text_primary,
+                        self.theme.bg_subcard,
+                        self.theme.border,
+                    );
+                    if let Some(maa_ver) = &self.maa_version {
+                        pill_badge(
+                            ui,
+                            &format!("MaaFramework {maa_ver}"),
+                            self.theme.text_secondary,
+                            self.theme.bg_subcard,
+                            self.theme.border,
+                        );
+                    }
+                });
+
+                ui.add_space(10.0);
+
+                egui::Frame::new()
+                    .fill(self.theme.bg_subcard)
+                    .stroke(Stroke::new(1.0, self.theme.border))
+                    .corner_radius(CornerRadius::same(self.theme.subcard_radius))
+                    .inner_margin(Margin::same(12))
+                    .show(ui, |ui| {
+                        if self.update_downloading {
+                            let (done, total, stage) =
+                                self.update_progress.as_ref().cloned().unwrap_or_else(|| {
+                                    (0, 0, "正在准备下载更新包...".to_string())
+                                });
+                            ui.label(
+                                egui::RichText::new(stage)
+                                    .color(self.theme.text_primary)
+                                    .strong(),
+                            );
+                            ui.add_space(6.0);
+                            let ratio = if total > 0 {
+                                (done as f32 / total as f32).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+                            ui.add(
+                                egui::ProgressBar::new(ratio)
+                                    .show_percentage()
+                                    .animate(true),
+                            );
+                            if total > 0 {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} / {}",
+                                        format_size_mb(done),
+                                        format_size_mb(total)
+                                    ))
+                                    .small()
+                                    .color(self.theme.text_secondary),
+                                );
+                            }
+                        } else if self.update_checking {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    egui::RichText::new(
+                                        "正在并发竞速检测最新版本（R2 镜像 / Cloudflare 优选 / GitHub 代理 / 直连）...",
+                                    )
+                                    .color(self.theme.text_primary),
+                                );
+                            });
+                        } else if let Some(err) = &self.update_error {
+                            ui.label(
+                                egui::RichText::new(format!("更新过程出错：{err}"))
+                                    .color(self.theme.error)
+                                    .strong(),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "可展开下方加速配置添加自定义镜像或切换代理，也可直接前往 Release 页面下载。",
+                                )
+                                .small()
+                                .color(self.theme.text_muted),
+                            );
+                        } else if let Some(info) = &self.update_info {
+                            if info.has_update {
+                                ui.horizontal_wrapped(|ui| {
+                                    pill_badge(
+                                        ui,
+                                        &format!("发现新版本 v{}", info.latest_version),
+                                        self.theme.accent_text,
+                                        self.theme.accent_soft_bg,
+                                        self.theme.accent.gamma_multiply(0.5),
+                                    );
+                                    pill_badge(
+                                        ui,
+                                        info.package_kind.label(),
+                                        self.theme.success,
+                                        self.theme.success_bg,
+                                        self.theme.success.gamma_multiply(0.45),
+                                    );
+                                    if info.artifact.size > 0 {
+                                        pill_badge(
+                                            ui,
+                                            &format_size_mb(info.artifact.size),
+                                            self.theme.text_secondary,
+                                            self.theme.bg_card,
+                                            self.theme.border,
+                                        );
+                                    }
+                                    pill_badge(
+                                        ui,
+                                        &format!("{} · {} ms", info.source_name, info.latency_ms),
+                                        self.theme.text_secondary,
+                                        self.theme.bg_card,
+                                        self.theme.border,
+                                    );
+                                });
+                                ui.add_space(8.0);
+                                let notes_text = if info.notes.trim().is_empty() {
+                                    "本次发布暂无详细更新说明。"
+                                } else {
+                                    info.notes.trim()
+                                };
+                                egui::ScrollArea::vertical()
+                                    .max_height(150.0)
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(notes_text)
+                                                .color(self.theme.text_secondary),
+                                        );
+                                    });
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "当前已是最新版本 v{}（经 {} · {} ms 验证）",
+                                        info.current_version, info.source_name, info.latency_ms
+                                    ))
+                                    .color(self.theme.success)
+                                    .strong(),
+                                );
+                            }
+                        } else {
+                            ui.label(
+                                egui::RichText::new("尚未执行检查，点击下方按钮即可并发测速检测最新版本。")
+                                    .color(self.theme.text_secondary),
+                            );
+                        }
+                    });
+
+                ui.add_space(12.0);
+
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(info) = &self.update_info
+                        && info.has_update
+                        && !self.update_downloading
+                        && self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Download),
+                                "立即更新并重启",
+                                None,
+                                IconButtonVariant::Primary,
+                                28.0,
+                                false,
+                            )
+                            .clicked()
+                    {
+                        start_download = Some(info.clone());
+                    }
+
+                    if !self.update_downloading {
+                        let check_label = if self.update_checking {
+                            "检查中..."
+                        } else {
+                            "重新检查更新"
+                        };
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Refresh),
+                                check_label,
+                                None,
+                                IconButtonVariant::Secondary,
+                                28.0,
+                                self.update_checking,
+                            )
+                            .clicked()
+                        {
+                            trigger_recheck = true;
+                        }
+
+                        let opt_label = if self.update_optimizing {
+                            "优选测速中..."
+                        } else {
+                            "本机节点优选"
+                        };
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Bolt),
+                                opt_label,
+                                None,
+                                IconButtonVariant::SoftAccent,
+                                28.0,
+                                self.update_optimizing,
+                            )
+                            .on_hover_text("从当前电脑网络实时探测最快的镜像与加速节点，并缓存最优 Cloudflare IP")
+                            .clicked()
+                        {
+                            optimize_nodes_clicked = true;
+                        }
+                    }
+
+                    if self
+                        .theme
+                        .icon_button(
+                            ui,
+                            Some(UiIcon::ExternalLink),
+                            "浏览器打开 Release",
+                            None,
+                            IconButtonVariant::Secondary,
+                            28.0,
+                            false,
+                        )
+                        .clicked()
+                    {
+                        let tag = self
+                            .update_info
+                            .as_ref()
+                            .map(|i| i.tag.trim())
+                            .filter(|t| !t.is_empty());
+                        open_release_url = Some(match tag {
+                            Some(t) => format!("{GITHUB_REPO_URL}/releases/tag/{t}"),
+                            None => format!("{GITHUB_REPO_URL}/releases"),
+                        });
+                    }
+                });
+
+                if self.update_optimizing
+                    || self.node_optimize_summary.is_some()
+                    || !self.node_probe_results.is_empty()
+                    || !self.updater_config.cached_cf_ips.is_empty()
+                {
+                    ui.add_space(10.0);
+                    egui::Frame::new()
+                        .fill(self.theme.bg_subcard)
+                        .stroke(Stroke::new(1.0, self.theme.border))
+                        .corner_radius(CornerRadius::same(self.theme.subcard_radius))
+                        .inner_margin(Margin::same(10))
+                        .show(ui, |ui| {
+                            if self.update_optimizing {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "正在从本机网络采样并并发测速（TCP 握手 → HTTPS/SNI 校验 → 节点优选）...",
+                                        )
+                                        .small()
+                                        .color(self.theme.text_primary),
+                                    );
+                                });
+                            } else if let Some(summary) = &self.node_optimize_summary {
+                                ui.label(
+                                    egui::RichText::new(summary)
+                                        .small()
+                                        .color(self.theme.text_primary)
+                                        .strong(),
+                                );
+                            }
+                            if !self.updater_config.cached_cf_ips.is_empty() {
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("本机已缓存 CF 优选 IP：")
+                                            .small()
+                                            .color(self.theme.text_secondary),
+                                    );
+                                    for ip in self.updater_config.cached_cf_ips.iter().take(3) {
+                                        pill_badge(
+                                            ui,
+                                            ip,
+                                            self.theme.accent_text,
+                                            self.theme.accent_soft_bg,
+                                            self.theme.accent.gamma_multiply(0.4),
+                                        );
+                                    }
+                                });
+                            }
+                            if !self.node_probe_results.is_empty() {
+                                ui.add_space(6.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(100.0)
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        for node in &self.node_probe_results {
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(&node.label)
+                                                        .small()
+                                                        .color(self.theme.text_secondary),
+                                                );
+                                                let metric = if node.speed_kbps > 0 {
+                                                    format!(
+                                                        "{} ms · {}",
+                                                        node.latency_ms,
+                                                        format_node_speed(node.speed_kbps)
+                                                    )
+                                                } else {
+                                                    format!("{} ms", node.latency_ms)
+                                                };
+                                                ui.label(
+                                                    egui::RichText::new(metric)
+                                                        .small()
+                                                        .color(self.theme.text_muted),
+                                                );
+                                            });
+                                        }
+                                    });
+                            }
+                        });
+                }
+
+                ui.add_space(10.0);
+
+                egui::CollapsingHeader::new("加速节点与网络配置（R2 镜像 / 本机优选 / GitHub 代理）")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.checkbox(
+                            &mut self.updater_config.auto_optimize_cf,
+                            "启用客户端本地 Cloudflare 自动优选（根据本机网络动态测速，24小时自动刷新）",
+                        );
+                        ui.checkbox(
+                            &mut self.updater_config.enable_github_proxies,
+                            "启用内置国内 GitHub 加速代理回退（gh-proxy / ghfast / ghproxy）",
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("自定义镜像基址（如 Cloudflare R2 域名，每行一个，优先竞速）：")
+                                .small()
+                                .color(self.theme.text_secondary),
+                        );
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.custom_mirrors_text)
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("https://dl.example.com/moca"),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("可选：手动附加 Cloudflare 候选 IP（留空则完全由本机自动采样优选）：")
+                                .small()
+                                .color(self.theme.text_secondary),
+                        );
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.cf_ips_text)
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("可选，每行一个 IP，与本机自动采样节点同台测速竞争"),
+                        );
+                        ui.add_space(8.0);
+                        if self
+                            .theme
+                            .icon_button(
+                                ui,
+                                Some(UiIcon::Refresh),
+                                "保存加速配置并重新测速",
+                                None,
+                                IconButtonVariant::SoftAccent,
+                                26.0,
+                                self.update_checking
+                                    || self.update_optimizing
+                                    || self.update_downloading,
+                            )
+                            .clicked()
+                        {
+                            save_and_recheck = true;
+                        }
+                    });
+            });
+
+        self.update_modal_open = open;
+
+        if let Some(info) = start_download {
+            self.update_downloading = true;
+            self.update_error = None;
+            self.update_progress = Some((
+                0,
+                info.artifact.size,
+                "正在并发探测最快下载节点...".to_string(),
+            ));
+            self.runtime.send(RuntimeCommand::DownloadAndInstallUpdate {
+                info: Box::new(info),
+            });
+        }
+        if save_and_recheck {
+            self.sync_updater_text_fields();
+            self.updater_config.cached_cf_ips.clear();
+            self.updater_config.cached_cf_updated_at = 0;
+            match self
+                .updater_config
+                .save(&profiles_dir().join("updater.toml"))
+            {
+                Ok(()) => {
+                    self.push_log(
+                        LogLevel::Info,
+                        "已保存自动更新加速节点配置，开始本机测速检查",
+                    );
+                    self.trigger_update_check(false);
+                }
+                Err(err) => {
+                    self.update_error = Some(err.clone());
+                    self.push_log(LogLevel::Error, err);
+                }
+            }
+        } else if optimize_nodes_clicked {
+            self.trigger_node_optimize();
+        } else if trigger_recheck {
+            self.trigger_update_check(false);
+        }
+        if let Some(url) = open_release_url {
+            self.open_external_url_with_fallback(ctx, &url);
+        }
+    }
+}
+
+fn format_size_mb(bytes: u64) -> String {
+    format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
+fn format_node_speed(speed_kbps: u64) -> String {
+    if speed_kbps >= 1024 {
+        format!("{:.1} MB/s", speed_kbps as f64 / 1024.0)
+    } else {
+        format!("{speed_kbps} KB/s")
     }
 }
 
